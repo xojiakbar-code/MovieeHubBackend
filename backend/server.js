@@ -1,5 +1,5 @@
 // =========================================================
-// MOVIEHUB BACKEND - To'liq server (Tuzatilgan)
+// MOVIEHUB BACKEND - TO'LIQ SERVER (TUZATILGAN)
 // =========================================================
 require('dotenv').config();
 const express = require('express');
@@ -16,15 +16,10 @@ const PORT = process.env.PORT || 5000;
 // =========================================================
 // MIDDLEWARE
 // =========================================================
-app.use(cors({
-  origin: '*',
-  credentials: true
-}));
-
+app.use(cors({ origin: '*', credentials: true }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Uploads papkasi
 const uploadsPath = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsPath)) {
   fs.mkdirSync(uploadsPath, { recursive: true });
@@ -34,7 +29,6 @@ app.use('/uploads', express.static(uploadsPath));
 // =========================================================
 // MONGODB SCHEMALAR
 // =========================================================
-// Movie Schema
 const MovieSchema = new mongoose.Schema({
   nomi: { type: String, required: true, trim: true },
   turi: { type: String, enum: ['film', 'serial'], required: true },
@@ -52,25 +46,11 @@ const MovieSchema = new mongoose.Schema({
   }]
 }, { timestamps: true });
 
-// Admin Schema
 const AdminSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true, trim: true },
   password: { type: String, required: true }
 }, { timestamps: true });
 
-// Admin parolni hash qilish
-AdminSchema.pre('save', async function(next) {
-  if (!this.isModified('password')) return next();
-  try {
-    const salt = await bcrypt.genSalt(10);
-    this.password = await bcrypt.hash(this.password, salt);
-    next();
-  } catch (error) {
-    next(error);
-  }
-});
-
-// Admin parolni tekshirish
 AdminSchema.methods.comparePassword = async function(candidatePassword) {
   try {
     return await bcrypt.compare(candidatePassword, this.password);
@@ -89,30 +69,20 @@ const Admin = mongoose.model('Admin', AdminSchema);
 const auth = (req, res, next) => {
   try {
     const token = req.header('Authorization')?.replace('Bearer ', '');
-    
     if (!token) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Token topilmadi' 
-      });
+      return res.status(401).json({ success: false, message: 'Token topilmadi' });
     }
-
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'default_secret');
     req.admin = decoded;
     next();
   } catch (error) {
-    res.status(401).json({ 
-      success: false, 
-      message: 'Noto\'g\'ri token' 
-    });
+    res.status(401).json({ success: false, message: 'Noto\'g\'ri token' });
   }
 };
 
 // =========================================================
 // ROUTE'LAR
 // =========================================================
-
-// -------------------- ROOT --------------------
 app.get('/', (req, res) => {
   res.json({
     success: true,
@@ -127,12 +97,11 @@ app.get('/', (req, res) => {
   });
 });
 
-// -------------------- HEALTH --------------------
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', uptime: process.uptime() });
 });
 
-// -------------------- MOVIES --------------------
+// MOVIES
 app.get('/api/movies', async (req, res) => {
   try {
     const movies = await Movie.find().sort({ createdAt: -1 }).lean();
@@ -206,7 +175,9 @@ app.delete('/api/movies/:id', auth, async (req, res) => {
   }
 });
 
-// -------------------- ADMIN LOGIN (TUZATILGAN) --------------------
+// =========================================================
+// ADMIN LOGIN (TUZATILGAN)
+// =========================================================
 app.post('/api/admin/login', async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -214,45 +185,39 @@ app.post('/api/admin/login', async (req, res) => {
     console.log('🔑 Login so\'rovi:', { username });
     
     if (!username || !password) {
-      console.log('❌ Username yoki parol yo\'q');
       return res.status(400).json({
         success: false,
         message: 'Username va parol talab qilinadi'
       });
     }
     
-    // Adminni topish
     const admin = await Admin.findOne({ username });
-    console.log('👤 Admin topildi:', admin ? 'Ha' : `Yo'q (username: ${username})`);
+    console.log('👤 Admin topildi:', admin ? 'Ha' : 'Yo\'q');
     
     if (!admin) {
-      console.log('❌ Admin topilmadi');
       return res.status(401).json({
         success: false,
         message: 'Noto\'g\'ri ma\'lumotlar'
       });
     }
     
-    // Parolni tekshirish
     const isValid = await admin.comparePassword(password);
-    console.log('🔐 Parol tekshiruvi:', isValid ? '✅ To\'g\'ri' : '❌ Noto\'g\'ri');
+    console.log('🔐 Parol to\'g\'ri:', isValid ? 'Ha' : 'Yo\'q');
     
     if (!isValid) {
-      console.log('❌ Parol noto\'g\'ri');
       return res.status(401).json({
         success: false,
         message: 'Noto\'g\'ri ma\'lumotlar'
       });
     }
     
-    // Token yaratish
     const token = jwt.sign(
       { id: admin._id, username: admin.username },
       process.env.JWT_SECRET || 'default_secret',
       { expiresIn: '7d' }
     );
     
-    console.log('✅ Login muvaffaqiyatli! Token yaratildi');
+    console.log('✅ Token yaratildi');
     
     res.json({
       success: true,
@@ -273,7 +238,9 @@ app.post('/api/admin/login', async (req, res) => {
   }
 });
 
-// -------------------- 404 --------------------
+// =========================================================
+// 404
+// =========================================================
 app.use((req, res) => {
   res.status(404).json({
     success: false,
@@ -281,7 +248,6 @@ app.use((req, res) => {
   });
 });
 
-// -------------------- ERROR HANDLER --------------------
 app.use((err, req, res, next) => {
   console.error('❌ Server xatosi:', err);
   res.status(500).json({
@@ -291,7 +257,7 @@ app.use((err, req, res, next) => {
 });
 
 // =========================================================
-// MONGODB ULASH VA SERVERNI ISHGA TUSHIRISH
+// MONGODB ULASH
 // =========================================================
 async function connectDB() {
   try {
@@ -303,31 +269,57 @@ async function connectDB() {
   }
 }
 
-async function createDefaultAdmin() {
+// =========================================================
+// ADMIN PAROLNI QAYTA O'RNATISH (MUHIM!)
+// =========================================================
+async function resetAdminPassword() {
   try {
-    const count = await Admin.countDocuments();
+    const username = process.env.ADMIN_USERNAME || 'admin';
+    const newPassword = process.env.ADMIN_PASSWORD || 'kuchli_parol123';
     
-    if (count === 0) {
-      const username = process.env.ADMIN_USERNAME || 'admin';
-      const password = process.env.ADMIN_PASSWORD || 'kuchli_parol123';
+    console.log(`🔄 Admin parolni yangilash: ${username}`);
+    
+    const admin = await Admin.findOne({ username });
+    
+    if (admin) {
+      // Parolni qayta hash qilish
+      const salt = await bcrypt.genSalt(10);
+      const hashedPassword = await bcrypt.hash(newPassword, salt);
       
-      const admin = new Admin({ username, password });
+      admin.password = hashedPassword;
       await admin.save();
       
-      console.log('✅ Admin yaratildi:');
+      console.log(`✅ Admin parol yangilandi!`);
       console.log(`   👤 Username: ${username}`);
-      console.log(`   🔑 Password: ${password}`);
+      console.log(`   🔑 Password: ${newPassword}`);
+      return true;
     } else {
-      console.log(`✅ ${count} ta admin mavjud`);
+      // Admin mavjud emas, yangi yaratish
+      const salt = await bcrypt.genSalt(10);
+      const hashedPassword = await bcrypt.hash(newPassword, salt);
+      
+      await Admin.create({
+        username: username,
+        password: hashedPassword
+      });
+      
+      console.log(`✅ Admin yaratildi!`);
+      console.log(`   👤 Username: ${username}`);
+      console.log(`   🔑 Password: ${newPassword}`);
+      return true;
     }
   } catch (error) {
-    console.error('Admin yaratish xatosi:', error);
+    console.error('❌ Admin parolni yangilash xatosi:', error);
+    return false;
   }
 }
 
+// =========================================================
+// SERVERNI ISHGA TUSHIRISH
+// =========================================================
 async function startServer() {
   await connectDB();
-  await createDefaultAdmin();
+  await resetAdminPassword(); // <-- PAROLNI QAYTA O'RNATISH
   
   app.listen(PORT, () => {
     console.log(`🚀 Server ${PORT}-portda ishlamoqda`);
@@ -337,6 +329,25 @@ async function startServer() {
 
 startServer();
 
+// =========================================================
+// XATOLIKLARNI USHLASH
+// =========================================================
 process.on('unhandledRejection', (error) => {
   console.error('❌ Tutilmagan xato:', error);
+});
+
+process.on('SIGINT', () => {
+  console.log('\n👋 Server to\'xtatilmoqda...');
+  mongoose.connection.close(() => {
+    console.log('✅ MongoDB ulanishi yopildi');
+    process.exit(0);
+  });
+});
+
+process.on('SIGTERM', () => {
+  console.log('\n👋 Server to\'xtatilmoqda (SIGTERM)...');
+  mongoose.connection.close(() => {
+    console.log('✅ MongoDB ulanishi yopildi');
+    process.exit(0);
+  });
 });
