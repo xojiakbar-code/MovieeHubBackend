@@ -1,5 +1,5 @@
 // =========================================================
-// MOVIEHUB BACKEND - To'liq server
+// MOVIEHUB BACKEND - To'liq server (Tuzatilgan)
 // =========================================================
 require('dotenv').config();
 const express = require('express');
@@ -72,7 +72,12 @@ AdminSchema.pre('save', async function(next) {
 
 // Admin parolni tekshirish
 AdminSchema.methods.comparePassword = async function(candidatePassword) {
-  return await bcrypt.compare(candidatePassword, this.password);
+  try {
+    return await bcrypt.compare(candidatePassword, this.password);
+  } catch (error) {
+    console.error('Parol tekshirish xatosi:', error);
+    return false;
+  }
 };
 
 const Movie = mongoose.model('Movie', MovieSchema);
@@ -88,7 +93,7 @@ const auth = (req, res, next) => {
     if (!token) {
       return res.status(401).json({ 
         success: false, 
-        message: 'Token topilmadi. Iltimos, tizimga kiring.' 
+        message: 'Token topilmadi' 
       });
     }
 
@@ -96,21 +101,9 @@ const auth = (req, res, next) => {
     req.admin = decoded;
     next();
   } catch (error) {
-    if (error.name === 'JsonWebTokenError') {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Noto\'g\'ri token.' 
-      });
-    }
-    if (error.name === 'TokenExpiredError') {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Token muddati tugagan. Iltimos, qayta kiring.' 
-      });
-    }
-    res.status(500).json({ 
+    res.status(401).json({ 
       success: false, 
-      message: 'Server xatosi: ' + error.message 
+      message: 'Noto\'g\'ri token' 
     });
   }
 };
@@ -123,42 +116,32 @@ const auth = (req, res, next) => {
 app.get('/', (req, res) => {
   res.json({
     success: true,
-    message: '🎬 MovieHub API ishlamoqda!',
+    message: '🎬 MovieHub API',
     version: '1.0.0',
     endpoints: {
       movies: '/api/movies',
       search: '/api/movies/search?q=nom',
       movieById: '/api/movies/:id',
-      adminLogin: '/api/admin/login',
-      uploads: '/uploads/'
-    },
-    status: 'online',
-    timestamp: new Date().toISOString()
+      adminLogin: '/api/admin/login'
+    }
   });
 });
 
 // -------------------- HEALTH --------------------
 app.get('/health', (req, res) => {
-  res.json({
-    status: 'OK',
-    uptime: process.uptime(),
-    timestamp: new Date().toISOString()
-  });
+  res.json({ status: 'OK', uptime: process.uptime() });
 });
 
 // -------------------- MOVIES --------------------
-// GET - Barcha filmlar
 app.get('/api/movies', async (req, res) => {
   try {
     const movies = await Movie.find().sort({ createdAt: -1 }).lean();
     res.json({ success: true, count: movies.length, data: movies });
   } catch (error) {
-    console.error('Filmlarni olish xatosi:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// GET - Qidiruv
 app.get('/api/movies/search', async (req, res) => {
   try {
     const { q } = req.query;
@@ -170,12 +153,10 @@ app.get('/api/movies/search', async (req, res) => {
     }).sort({ createdAt: -1 }).lean();
     res.json({ success: true, count: movies.length, data: movies });
   } catch (error) {
-    console.error('Qidiruv xatosi:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// GET - Bitta film
 app.get('/api/movies/:id', async (req, res) => {
   try {
     const movie = await Movie.findById(req.params.id).lean();
@@ -184,30 +165,19 @@ app.get('/api/movies/:id', async (req, res) => {
     }
     res.json({ success: true, data: movie });
   } catch (error) {
-    console.error('Filmni olish xatosi:', error);
-    if (error.name === 'CastError') {
-      return res.status(400).json({ success: false, message: 'Noto\'g\'ri ID formati' });
-    }
     res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// POST - Film qo'shish (Admin)
 app.post('/api/movies', auth, async (req, res) => {
   try {
     const movie = await Movie.create(req.body);
-    res.status(201).json({ 
-      success: true, 
-      message: 'Film muvaffaqiyatli qo\'shildi',
-      data: movie 
-    });
+    res.status(201).json({ success: true, data: movie });
   } catch (error) {
-    console.error('Film qo\'shish xatosi:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// PUT - Film yangilash (Admin)
 app.put('/api/movies/:id', auth, async (req, res) => {
   try {
     const movie = await Movie.findByIdAndUpdate(
@@ -218,18 +188,12 @@ app.put('/api/movies/:id', auth, async (req, res) => {
     if (!movie) {
       return res.status(404).json({ success: false, message: 'Film topilmadi' });
     }
-    res.json({ 
-      success: true, 
-      message: 'Film muvaffaqiyatli yangilandi',
-      data: movie 
-    });
+    res.json({ success: true, data: movie });
   } catch (error) {
-    console.error('Film yangilash xatosi:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// DELETE - Film o'chirish (Admin)
 app.delete('/api/movies/:id', auth, async (req, res) => {
   try {
     const movie = await Movie.findByIdAndDelete(req.params.id);
@@ -238,52 +202,57 @@ app.delete('/api/movies/:id', auth, async (req, res) => {
     }
     res.json({ success: true, message: 'Film o\'chirildi' });
   } catch (error) {
-    console.error('Film o\'chirish xatosi:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// -------------------- ADMIN LOGIN --------------------
+// -------------------- ADMIN LOGIN (TUZATILGAN) --------------------
 app.post('/api/admin/login', async (req, res) => {
   try {
     const { username, password } = req.body;
     
-    console.log('🔑 Login so\'rovi keldi:', { username });
+    console.log('🔑 Login so\'rovi:', { username });
     
     if (!username || !password) {
+      console.log('❌ Username yoki parol yo\'q');
       return res.status(400).json({
         success: false,
-        message: 'Username va parol talab qilinadi.'
+        message: 'Username va parol talab qilinadi'
       });
     }
     
+    // Adminni topish
     const admin = await Admin.findOne({ username });
-    console.log('👤 Admin topildi:', admin ? 'Ha' : 'Yo\'q');
+    console.log('👤 Admin topildi:', admin ? 'Ha' : `Yo'q (username: ${username})`);
     
     if (!admin) {
+      console.log('❌ Admin topilmadi');
       return res.status(401).json({
         success: false,
         message: 'Noto\'g\'ri ma\'lumotlar'
       });
     }
     
+    // Parolni tekshirish
     const isValid = await admin.comparePassword(password);
-    console.log('🔐 Parol to\'g\'ri:', isValid ? 'Ha' : 'Yo\'q');
+    console.log('🔐 Parol tekshiruvi:', isValid ? '✅ To\'g\'ri' : '❌ Noto\'g\'ri');
     
     if (!isValid) {
+      console.log('❌ Parol noto\'g\'ri');
       return res.status(401).json({
         success: false,
         message: 'Noto\'g\'ri ma\'lumotlar'
       });
     }
     
+    // Token yaratish
     const token = jwt.sign(
       { id: admin._id, username: admin.username },
       process.env.JWT_SECRET || 'default_secret',
       { expiresIn: '7d' }
     );
     
-    console.log('✅ Token yaratildi');
+    console.log('✅ Login muvaffaqiyatli! Token yaratildi');
     
     res.json({
       success: true,
@@ -308,15 +277,7 @@ app.post('/api/admin/login', async (req, res) => {
 app.use((req, res) => {
   res.status(404).json({
     success: false,
-    message: 'So\'ralgan manzil topilmadi',
-    availableEndpoints: [
-      '/',
-      '/health',
-      '/api/movies',
-      '/api/movies/search?q=nom',
-      '/api/movies/:id',
-      '/api/admin/login'
-    ]
+    message: 'So\'ralgan manzil topilmadi'
   });
 });
 
@@ -325,7 +286,7 @@ app.use((err, req, res, next) => {
   console.error('❌ Server xatosi:', err);
   res.status(500).json({
     success: false,
-    message: 'Serverda xatolik yuz berdi: ' + err.message
+    message: 'Serverda xatolik: ' + err.message
   });
 });
 
@@ -334,13 +295,10 @@ app.use((err, req, res, next) => {
 // =========================================================
 async function connectDB() {
   try {
-    await mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/moviehub', {
-      useNewUrlParser: true,
-      useUnifiedTopology: true
-    });
-    console.log('✅ MongoDB ga muvaffaqiyatli ulandi.');
+    await mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/moviehub');
+    console.log('✅ MongoDB ga ulandi.');
   } catch (error) {
-    console.error('❌ MongoDB ga ulanish xatosi:', error);
+    console.error('❌ MongoDB ulanish xatosi:', error);
     process.exit(1);
   }
 }
@@ -356,10 +314,9 @@ async function createDefaultAdmin() {
       const admin = new Admin({ username, password });
       await admin.save();
       
-      console.log('✅ Default admin yaratildi:');
+      console.log('✅ Admin yaratildi:');
       console.log(`   👤 Username: ${username}`);
       console.log(`   🔑 Password: ${password}`);
-      console.log('   ⚠️  Xavfsizlik uchun parolni o\'zgartiring!');
     } else {
       console.log(`✅ ${count} ta admin mavjud`);
     }
@@ -373,40 +330,13 @@ async function startServer() {
   await createDefaultAdmin();
   
   app.listen(PORT, () => {
-    console.log(`🚀 Server ${PORT}-portda ishga tushdi.`);
-    console.log(`🌐 Local: http://localhost:${PORT}`);
-    console.log(`📚 API: http://localhost:${PORT}/api/movies`);
-    console.log(`🔐 Admin: http://localhost:${PORT}/api/admin/login`);
-    console.log(`🏠 Root: http://localhost:${PORT}/`);
+    console.log(`🚀 Server ${PORT}-portda ishlamoqda`);
+    console.log(`🌐 http://localhost:${PORT}`);
   });
 }
 
 startServer();
 
-// =========================================================
-// XATOLIKLARNI USHLASH
-// =========================================================
 process.on('unhandledRejection', (error) => {
   console.error('❌ Tutilmagan xato:', error);
-  if (process.env.NODE_ENV === 'production') {
-    console.log('⚠️  Server ishlashda davom etmoqda');
-  } else {
-    process.exit(1);
-  }
-});
-
-process.on('SIGINT', () => {
-  console.log('\n👋 Server to\'xtatilmoqda...');
-  mongoose.connection.close(() => {
-    console.log('✅ MongoDB ulanishi yopildi');
-    process.exit(0);
-  });
-});
-
-process.on('SIGTERM', () => {
-  console.log('\n👋 Server to\'xtatilmoqda (SIGTERM)...');
-  mongoose.connection.close(() => {
-    console.log('✅ MongoDB ulanishi yopildi');
-    process.exit(0);
-  });
 });
