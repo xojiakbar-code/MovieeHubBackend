@@ -1,215 +1,217 @@
-// Asosiy server fayli
+// Asosiy server fayli - Optimallashtirilgan
 require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const path = require('path');
-const bcrypt = require('bcrypt');
 const fs = require('fs');
-
-// Modellarni import qilish
-const Admin = require('./models/Admin');
-const Movie = require('./models/Movie');
-
-// Route'larni import qilish
-const movieRoutes = require('./routes/movies');
-const adminRoutes = require('./routes/admin');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// ============ MIDDLEWARE'LAR ============
-
-// CORS sozlamalari - Frontend Cloudflare Pages uchun
-const allowedOrigins = [
-  'https://movihub.pages.dev',
-  'https://moviehub.pages.dev',
-  'https://*.pages.dev',
-  'http://localhost:3000',
-  'http://localhost:5000'
-];
-
+// ============ MIDDLEWARE'LAR (TEZKOR) ============
 app.use(cors({
-  origin: function (origin, callback) {
-    // Agar origin bo'lmasa (masalan, Postman yoki mobil ilova), ruxsat berish
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.some(allowed => origin.match(allowed.replace(/\*/g, '.*')))) {
-      callback(null, true);
-    } else {
-      console.log('CORS bloklangan origin:', origin);
-      callback(null, true); // Ishlab chiqarishda false qilib qo'yish mumkin
-    }
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
+  origin: '*', // Tezlik uchun barcha originlarga ruxsat
+  credentials: true
 }));
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Yuklangan fayllarni statik qilib ochish
+// Uploads papkasini yaratish
 const uploadsPath = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsPath)) {
   fs.mkdirSync(uploadsPath, { recursive: true });
 }
 app.use('/uploads', express.static(uploadsPath));
 
-// ============ ROUTE'LAR ============
-app.use('/api/movies', movieRoutes);
-app.use('/api/admin', adminRoutes);
+// ============ MODELLAR ============
+const MovieSchema = new mongoose.Schema({
+  nomi: { type: String, required: true },
+  turi: { type: String, enum: ['film', 'serial'], required: true },
+  janr: { type: String, required: true },
+  davlati: { type: String, required: true },
+  yili: { type: Number, required: true },
+  tili: { type: String, required: true },
+  yoshChegarasi: { type: String, default: '0+' },
+  davomiyligi: { type: String, required: true },
+  rasm: { type: String, required: true },
+  video: { type: String },
+  qismlar: [{ qismRaqami: Number, video: String }]
+}, { timestamps: true });
 
-// ============ ROOT VA BOSHQA SAHIFALAR ============
-app.get('/', (req, res) => {
-  res.json({
-    success: true,
-    message: '🎬 MovieHub API ishlamoqda!',
-    version: '1.0.0',
-    baseUrl: process.env.BASE_URL || 'https://movieehubbackend.onrender.com',
-    endpoints: {
-      movies: '/api/movies',
-      search: '/api/movies/search?q=nom',
-      movieById: '/api/movies/:id',
-      adminLogin: '/api/admin/login',
-      uploads: '/uploads/'
-    },
-    docs: 'https://github.com/xojiakbar-code/MovieeHubBackend',
-    status: 'online',
-    timestamp: new Date().toISOString()
-  });
+const AdminSchema = new mongoose.Schema({
+  username: { type: String, required: true, unique: true },
+  password: { type: String, required: true }
 });
 
-// Health check - Render uchun
-app.get('/health', (req, res) => {
-  res.status(200).json({
-    status: 'OK',
-    uptime: process.uptime(),
-    timestamp: new Date().toISOString()
-  });
-});
+const Movie = mongoose.model('Movie', MovieSchema);
+const Admin = mongoose.model('Admin', AdminSchema);
 
-// 404 - Topilmadi
-app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    message: 'So\'ralgan manzil topilmadi. API endpointlarini tekshiring.',
-    availableEndpoints: [
-      '/',
-      '/health',
-      '/api/movies',
-      '/api/movies/search?q=nom',
-      '/api/movies/:id',
-      '/api/admin/login',
-      '/uploads/'
-    ]
-  });
-});
+// ============ AUTH MIDDLEWARE ============
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcrypt');
 
-// ============ XATOLIKLARNI USHLASH ============
-app.use((err, req, res, next) => {
-  console.error('❌ Server xatosi:', err);
-  
-  // Multer xatoliklari
-  if (err.code === 'LIMIT_FILE_SIZE') {
-    return res.status(400).json({
-      success: false,
-      message: 'Fayl hajmi juda katta. Maksimal 50MB ruxsat etiladi.'
-    });
+const auth = (req, res, next) => {
+  try {
+    const token = req.header('Authorization')?.replace('Bearer ', '');
+    if (!token) {
+      return res.status(401).json({ success: false, message: 'Token topilmadi' });
+    }
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.admin = decoded;
+    next();
+  } catch (error) {
+    res.status(401).json({ success: false, message: 'Noto\'g\'ri token' });
   }
-  
-  res.status(500).json({
-    success: false,
-    message: 'Serverda xatolik yuz berdi: ' + err.message
+};
+
+// ============ ROUTE'LAR ============
+// GET - Barcha filmlar
+app.get('/api/movies', async (req, res) => {
+  try {
+    const movies = await Movie.find().sort({ createdAt: -1 }).lean();
+    res.json({ success: true, data: movies });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// GET - Qidiruv
+app.get('/api/movies/search', async (req, res) => {
+  try {
+    const { q } = req.query;
+    if (!q) return res.json({ success: true, data: [] });
+    const movies = await Movie.find({ 
+      nomi: { $regex: q, $options: 'i' } 
+    }).lean();
+    res.json({ success: true, data: movies });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// GET - Bitta film
+app.get('/api/movies/:id', async (req, res) => {
+  try {
+    const movie = await Movie.findById(req.params.id).lean();
+    if (!movie) {
+      return res.status(404).json({ success: false, message: 'Film topilmadi' });
+    }
+    res.json({ success: true, data: movie });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// POST - Admin login
+app.post('/api/admin/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    const admin = await Admin.findOne({ username });
+    
+    if (!admin) {
+      return res.status(401).json({ success: false, message: 'Noto\'g\'ri ma\'lumotlar' });
+    }
+    
+    const isValid = await bcrypt.compare(password, admin.password);
+    if (!isValid) {
+      return res.status(401).json({ success: false, message: 'Noto\'g\'ri ma\'lumotlar' });
+    }
+    
+    const token = jwt.sign(
+      { id: admin._id, username: admin.username },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+    
+    res.json({ 
+      success: true, 
+      token, 
+      admin: { id: admin._id, username: admin.username } 
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// POST - Film qo'shish (Admin)
+app.post('/api/movies', auth, async (req, res) => {
+  try {
+    const movie = await Movie.create(req.body);
+    res.status(201).json({ success: true, data: movie });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// PUT - Film yangilash (Admin)
+app.put('/api/movies/:id', auth, async (req, res) => {
+  try {
+    const movie = await Movie.findByIdAndUpdate(
+      req.params.id,
+      req.body,
+      { new: true, runValidators: true }
+    );
+    if (!movie) {
+      return res.status(404).json({ success: false, message: 'Film topilmadi' });
+    }
+    res.json({ success: true, data: movie });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// DELETE - Film o'chirish (Admin)
+app.delete('/api/movies/:id', auth, async (req, res) => {
+  try {
+    const movie = await Movie.findByIdAndDelete(req.params.id);
+    if (!movie) {
+      return res.status(404).json({ success: false, message: 'Film topilmadi' });
+    }
+    res.json({ success: true, message: 'Film o\'chirildi' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Health check
+app.get('/health', (req, res) => {
+  res.json({ status: 'OK', uptime: process.uptime() });
+});
+
+// Root
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'MovieHub API ishlamoqda',
+    endpoints: ['/api/movies', '/api/admin/login']
   });
 });
 
 // ============ MONGODB ULASH ============
-async function connectDB() {
+async function startServer() {
   try {
-    await mongoose.connect(process.env.MONGO_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true
-    });
-    console.log('✅ MongoDB ga muvaffaqiyatli ulandi.');
-  } catch (error) {
-    console.error('❌ MongoDB ga ulanish xatosi:', error);
-    process.exit(1);
-  }
-}
-
-// ============ ADMIN YARATISH (birinchi ishga tushganda) ============
-async function createDefaultAdmin() {
-  try {
-    const adminCount = await Admin.countDocuments();
+    await mongoose.connect(process.env.MONGO_URI);
+    console.log('✅ MongoDB ulandi');
     
+    // Admin yaratish
+    const adminCount = await Admin.countDocuments();
     if (adminCount === 0) {
-      const username = process.env.ADMIN_USERNAME || 'admin';
-      const password = process.env.ADMIN_PASSWORD || 'admin123';
-      
-      // Parolni hash qilish
-      const salt = await bcrypt.genSalt(10);
-      const hashedPassword = await bcrypt.hash(password, salt);
-      
+      const hashedPassword = await bcrypt.hash(process.env.ADMIN_PASSWORD || 'admin123', 10);
       await Admin.create({
-        username: username,
+        username: process.env.ADMIN_USERNAME || 'admin',
         password: hashedPassword
       });
-      
-      console.log('✅ Default admin yaratildi:');
-      console.log(`   Username: ${username}`);
-      console.log(`   Password: ${password}`);
-      console.log('   ⚠️  Xavfsizlik uchun parolni o\'zgartirishni tavsiya qilamiz!');
-    } else {
-      console.log(`✅ Admin mavjud (${adminCount} ta admin)`);
+      console.log('✅ Admin yaratildi');
     }
-  } catch (error) {
-    console.error('Admin yaratish xatosi:', error);
-  }
-}
-
-// ============ SERVERNI ISHGA TUSHIRISH ============
-async function startServer() {
-  await connectDB();
-  await createDefaultAdmin();
-  
-  app.listen(PORT, () => {
-    console.log(`🚀 Server ${PORT}-portda ishga tushdi.`);
-    console.log(`🌐 Local: http://localhost:${PORT}`);
-    console.log(`📚 API: http://localhost:${PORT}/api/movies`);
-    console.log(`🔐 Admin: http://localhost:${PORT}/api/admin/login`);
-    console.log(`🏠 Root: http://localhost:${PORT}/`);
     
-    if (process.env.BASE_URL) {
-      console.log(`🌍 Production: ${process.env.BASE_URL}`);
-    }
-  });
+    app.listen(PORT, () => {
+      console.log(`🚀 Server ${PORT}-portda ishlamoqda`);
+    });
+  } catch (error) {
+    console.error('❌ Xatolik:', error);
+    process.exit(1);
+  }
 }
 
 startServer();
-
-// ============ TUTILMAGAN XATOLIKLARNI USHLASH ============
-process.on('unhandledRejection', (error) => {
-  console.error('❌ Tutilmagan xato:', error);
-  if (process.env.NODE_ENV === 'production') {
-    console.log('⚠️  Xatolik yuz berdi, lekin server ishlashda davom etmoqda.');
-  } else {
-    process.exit(1);
-  }
-});
-
-process.on('SIGINT', () => {
-  console.log('\n👋 Server to\'xtatilmoqda...');
-  mongoose.connection.close(() => {
-    console.log('✅ MongoDB ulanishi yopildi.');
-    process.exit(0);
-  });
-});
-
-process.on('SIGTERM', () => {
-  console.log('\n👋 Server to\'xtatilmoqda (SIGTERM)...');
-  mongoose.connection.close(() => {
-    console.log('✅ MongoDB ulanishi yopildi.');
-    process.exit(0);
-  });
-});
