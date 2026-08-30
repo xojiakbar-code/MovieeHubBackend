@@ -19,43 +19,32 @@ const PORT = process.env.PORT || 5000;
 // =========================================================
 // SECURITY & PERFORMANCE MIDDLEWARE
 // =========================================================
-
-// Compression - Javoblarni siqish
 app.use(compression());
-
-// Helmet - Xavfsizlik headerlari
 app.use(helmet({
   contentSecurityPolicy: false,
   crossOriginEmbedderPolicy: false
 }));
 
-// Rate Limiting - Har bir IP dan keladigan so'rovlarni cheklash
 const limiter = rateLimit({
-  windowMs: 1 * 60 * 1000, // 1 daqiqa
-  max: 100, // Har bir IP dan 100 ta so'rov
-  message: { 
-    success: false, 
-    message: '⚠️ Juda ko\'p so\'rov yuborildi. Iltimos, 1 daqiqa kutib keyin urinib ko\'ring.' 
-  },
+  windowMs: 1 * 60 * 1000,
+  max: 100,
+  message: { success: false, message: '⚠️ Juda ko\'p so\'rov' },
   standardHeaders: true,
   legacyHeaders: false,
 });
 app.use('/api/', limiter);
 
-// CORS - Optimallashtirilgan
 app.use(cors({
   origin: '*',
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
-  maxAge: 86400 // 24 soat
+  maxAge: 86400
 }));
 
-// JSON parser - Limit bilan
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Static files - Kesh bilan
 const uploadsPath = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsPath)) {
   fs.mkdirSync(uploadsPath, { recursive: true });
@@ -72,10 +61,10 @@ app.use('/uploads', express.static(uploadsPath, {
 }));
 
 // =========================================================
-// MONGODB CONNECTION - Optimallashtirilgan
+// MONGODB CONNECTION
 // =========================================================
 const mongooseOptions = {
-  maxPoolSize: 10, // Maksimal ulanishlar soni
+  maxPoolSize: 10,
   minPoolSize: 2,
   socketTimeoutMS: 45000,
   connectTimeoutMS: 10000,
@@ -86,7 +75,7 @@ const mongooseOptions = {
 };
 
 // =========================================================
-// MONGODB SCHEMALAR - Indexlar bilan
+// SCHEMALAR
 // =========================================================
 const MovieSchema = new mongoose.Schema({
   nomi: { type: String, required: true, trim: true, index: true },
@@ -105,13 +94,8 @@ const MovieSchema = new mongoose.Schema({
   }],
   views: { type: Number, default: 0 },
   rating: { type: Number, default: 0 }
-}, { 
-  timestamps: true,
-  toJSON: { virtuals: true },
-  toObject: { virtuals: true }
-});
+}, { timestamps: true });
 
-// COMPOUND INDEXLAR - Tez qidiruv uchun
 MovieSchema.index({ nomi: 'text' });
 MovieSchema.index({ turi: 1, yili: -1 });
 MovieSchema.index({ janr: 1, yili: -1 });
@@ -129,7 +113,7 @@ const Movie = mongoose.model('Movie', MovieSchema);
 const Admin = mongoose.model('Admin', AdminSchema);
 
 // =========================================================
-// AUTH MIDDLEWARE - Optimallashtirilgan
+// AUTH
 // =========================================================
 const auth = (req, res, next) => {
   try {
@@ -145,12 +129,12 @@ const auth = (req, res, next) => {
 };
 
 // =========================================================
-// CACHE SYSTEM - In-memory kesh
+// CACHE
 // =========================================================
 class Cache {
   constructor() {
     this.store = new Map();
-    this.defaultTTL = 30000; // 30 soniya
+    this.defaultTTL = 30000;
   }
 
   get(key) {
@@ -167,11 +151,8 @@ class Cache {
     this.store.set(key, { data, timestamp: Date.now(), ttl });
   }
 
-  clear() {
-    this.store.clear();
-  }
+  clear() { this.store.clear(); }
 
-  // Eski keshni tozalash (har 5 daqiqada)
   clean() {
     const now = Date.now();
     for (const [key, item] of this.store) {
@@ -183,89 +164,55 @@ class Cache {
 }
 
 const cache = new Cache();
-
-// Har 5 daqiqada keshni tozalash
 setInterval(() => cache.clean(), 5 * 60 * 1000);
 
 // =========================================================
-// ROUTE'LAR - OPTIMALLASHTIRILGAN
+// ROUTE'LAR
 // =========================================================
-
-// Health check
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'OK', 
     uptime: process.uptime(),
-    cacheSize: cache.store.size,
-    memory: process.memoryUsage()
+    cacheSize: cache.store.size
   });
 });
 
-// Root
 app.get('/', (req, res) => {
   res.json({ 
     success: true, 
     message: '🎬 MovieHub API', 
-    version: '1.0.0',
-    endpoints: ['/api/movies', '/api/admin/login']
+    version: '1.0.0'
   });
 });
 
-// -------------------- MOVIES (TEZKOR) --------------------
+// MOVIES
 app.get('/api/movies', async (req, res) => {
   try {
     const cacheKey = 'all_movies';
     const cached = cache.get(cacheKey);
-    
     if (cached) {
-      return res.json({ 
-        success: true, 
-        count: cached.length, 
-        data: cached,
-        cached: true 
-      });
+      return res.json({ success: true, count: cached.length, data: cached, cached: true });
     }
 
-    const movies = await Movie.find()
-      .sort({ createdAt: -1 })
-      .select('-__v')
-      .lean()
-      .limit(50);
-
+    const movies = await Movie.find().sort({ createdAt: -1 }).select('-__v').lean().limit(50);
     cache.set(cacheKey, movies);
-    
-    res.json({ 
-      success: true, 
-      count: movies.length, 
-      data: movies 
-    });
+    res.json({ success: true, count: movies.length, data: movies });
   } catch (error) {
-    console.error('Movies error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server xatosi' 
-    });
+    res.status(500).json({ success: false, message: 'Server xatosi' });
   }
 });
 
 app.get('/api/movies/search', async (req, res) => {
   try {
     const { q } = req.query;
-    
     if (!q || q.trim() === '') {
       return res.json({ success: true, data: [] });
     }
 
     const cacheKey = `search_${q.trim().toLowerCase()}`;
     const cached = cache.get(cacheKey);
-    
     if (cached) {
-      return res.json({ 
-        success: true, 
-        count: cached.length, 
-        data: cached,
-        cached: true 
-      });
+      return res.json({ success: true, count: cached.length, data: cached, cached: true });
     }
 
     const movies = await Movie.find({
@@ -273,105 +220,57 @@ app.get('/api/movies/search', async (req, res) => {
         { nomi: { $regex: q.trim(), $options: 'i' } },
         { janr: { $regex: q.trim(), $options: 'i' } }
       ]
-    })
-    .sort({ createdAt: -1 })
-    .select('-__v')
-    .lean()
-    .limit(50);
+    }).sort({ createdAt: -1 }).select('-__v').lean().limit(50);
 
-    cache.set(cacheKey, movies, 15000); // 15 soniya
-    
-    res.json({ 
-      success: true, 
-      count: movies.length, 
-      data: movies 
-    });
+    cache.set(cacheKey, movies, 15000);
+    res.json({ success: true, count: movies.length, data: movies });
   } catch (error) {
-    console.error('Search error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server xatosi' 
-    });
+    res.status(500).json({ success: false, message: 'Server xatosi' });
   }
 });
 
 app.get('/api/movies/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    
     if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Noto\'g\'ri ID' 
-      });
+      return res.status(400).json({ success: false, message: 'Noto\'g\'ri ID' });
     }
 
     const cacheKey = `movie_${id}`;
     const cached = cache.get(cacheKey);
-    
     if (cached) {
-      return res.json({ 
-        success: true, 
-        data: cached,
-        cached: true 
-      });
+      return res.json({ success: true, data: cached, cached: true });
     }
 
     const movie = await Movie.findById(id).select('-__v').lean();
-    
     if (!movie) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Film topilmadi' 
-      });
+      return res.status(404).json({ success: false, message: 'Film topilmadi' });
     }
 
-    // Ko'rishlar sonini oshirish (async, javobni kutmaydi)
     Movie.findByIdAndUpdate(id, { $inc: { views: 1 } }).catch(() => {});
-
-    cache.set(cacheKey, movie, 60000); // 60 soniya
-    
-    res.json({ 
-      success: true, 
-      data: movie 
-    });
+    cache.set(cacheKey, movie, 60000);
+    res.json({ success: true, data: movie });
   } catch (error) {
-    console.error('Movie detail error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server xatosi' 
-    });
+    res.status(500).json({ success: false, message: 'Server xatosi' });
   }
 });
 
-// -------------------- ADMIN ROUTE'LAR --------------------
+// ADMIN
 app.post('/api/admin/login', async (req, res) => {
   try {
     const { username, password } = req.body;
-    
     if (!username || !password) {
-      return res.status(400).json({
-        success: false,
-        message: 'Username va parol talab qilinadi'
-      });
+      return res.status(400).json({ success: false, message: 'Username va parol talab qilinadi' });
     }
 
     const admin = await Admin.findOne({ username }).lean();
-    
     if (!admin) {
-      return res.status(401).json({
-        success: false,
-        message: 'Noto\'g\'ri ma\'lumotlar'
-      });
+      return res.status(401).json({ success: false, message: 'Noto\'g\'ri ma\'lumotlar' });
     }
 
     const isValid = await bcrypt.compare(password, admin.password);
-    
     if (!isValid) {
-      return res.status(401).json({
-        success: false,
-        message: 'Noto\'g\'ri ma\'lumotlar'
-      });
+      return res.status(401).json({ success: false, message: 'Noto\'g\'ri ma\'lumotlar' });
     }
 
     const token = jwt.sign(
@@ -380,65 +279,41 @@ app.post('/api/admin/login', async (req, res) => {
       { expiresIn: '7d' }
     );
     
-    res.json({
-      success: true,
-      token,
-      admin: {
-        id: admin._id,
-        username: admin.username
-      }
-    });
+    res.json({ success: true, token, admin: { id: admin._id, username: admin.username } });
   } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server xatosi'
-    });
+    res.status(500).json({ success: false, message: 'Server xatosi' });
   }
 });
 
-// POST - Film qo'shish (Admin)
+// ADMIN CRUD
 app.post('/api/movies', auth, async (req, res) => {
   try {
     const movie = await Movie.create(req.body);
-    cache.clear(); // Keshni tozalash
+    cache.clear();
     res.status(201).json({ success: true, data: movie });
   } catch (error) {
-    console.error('Create error:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// PUT - Film yangilash (Admin)
 app.put('/api/movies/:id', auth, async (req, res) => {
   try {
-    const movie = await Movie.findByIdAndUpdate(
-      req.params.id,
-      req.body,
-      { new: true, runValidators: true }
-    );
-    if (!movie) {
-      return res.status(404).json({ success: false, message: 'Film topilmadi' });
-    }
-    cache.clear(); // Keshni tozalash
+    const movie = await Movie.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    if (!movie) return res.status(404).json({ success: false, message: 'Film topilmadi' });
+    cache.clear();
     res.json({ success: true, data: movie });
   } catch (error) {
-    console.error('Update error:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// DELETE - Film o'chirish (Admin)
 app.delete('/api/movies/:id', auth, async (req, res) => {
   try {
     const movie = await Movie.findByIdAndDelete(req.params.id);
-    if (!movie) {
-      return res.status(404).json({ success: false, message: 'Film topilmadi' });
-    }
-    cache.clear(); // Keshni tozalash
+    if (!movie) return res.status(404).json({ success: false, message: 'Film topilmadi' });
+    cache.clear();
     res.json({ success: true, message: 'Film o\'chirildi' });
   } catch (error) {
-    console.error('Delete error:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -459,10 +334,7 @@ app.use((err, req, res, next) => {
 // =========================================================
 async function connectDB() {
   try {
-    await mongoose.connect(
-      process.env.MONGO_URI || 'mongodb://localhost:27017/moviehub',
-      mongooseOptions
-    );
+    await mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/moviehub', mongooseOptions);
     console.log('✅ MongoDB ulandi.');
   } catch (error) {
     console.error('❌ MongoDB xatosi:', error);
@@ -470,9 +342,6 @@ async function connectDB() {
   }
 }
 
-// =========================================================
-// ADMIN INIT
-// =========================================================
 async function initAdmin() {
   try {
     const count = await Admin.countDocuments();
@@ -491,9 +360,6 @@ async function initAdmin() {
   }
 }
 
-// =========================================================
-// SERVER
-// =========================================================
 async function startServer() {
   await connectDB();
   await initAdmin();
@@ -507,7 +373,6 @@ async function startServer() {
 
 startServer();
 
-// Graceful shutdown
 process.on('SIGINT', () => {
   console.log('👋 Server to\'xtatilmoqda...');
   mongoose.connection.close().then(() => process.exit(0));
