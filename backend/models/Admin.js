@@ -1,8 +1,10 @@
-// Admin foydalanuvchi modeli
+// =========================================================
+// ADMIN MODELI - YANGILANGAN (tokenVersion qo'shildi)
+// =========================================================
 const mongoose = require('mongoose');
 const bcrypt = require('bcrypt');
 
-const adminSchema = new mongoose.Schema({
+const AdminSchema = new mongoose.Schema({
   username: {
     type: String,
     required: true,
@@ -12,15 +14,18 @@ const adminSchema = new mongoose.Schema({
   password: {
     type: String,
     required: true
+  },
+  tokenVersion: {
+    type: Number,
+    default: 0
   }
 }, {
   timestamps: true
 });
 
-// Parolni hash qilish (saqlashdan oldin)
-adminSchema.pre('save', async function(next) {
+// Parolni hash qilish
+AdminSchema.pre('save', async function(next) {
   if (!this.isModified('password')) return next();
-  
   try {
     const salt = await bcrypt.genSalt(10);
     this.password = await bcrypt.hash(this.password, salt);
@@ -30,9 +35,14 @@ adminSchema.pre('save', async function(next) {
   }
 });
 
-// Parolni tekshirish metodi
-adminSchema.methods.comparePassword = async function(candidatePassword) {
-  return await bcrypt.compare(candidatePassword, this.password);
+// Parolni tekshirish
+AdminSchema.methods.comparePassword = async function(candidatePassword) {
+  try {
+    return await bcrypt.compare(candidatePassword, this.password);
+  } catch (error) {
+    console.error('Parol tekshirish xatosi:', error);
+    return false;
+  }
 };
 
-module.exports = mongoose.model('Admin', adminSchema);
+module.exports = mongoose.model('Admin', AdminSchema);
