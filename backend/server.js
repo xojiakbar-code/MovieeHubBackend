@@ -1,5 +1,5 @@
 // =========================================================
-// MOVIEHUB BACKEND - TO'LIQ (LIKE/DISLIKE BILAN)
+// MOVIEHUB BACKEND - TO'LIQ (OPTIMALLASHTIRILGAN)
 // =========================================================
 require('dotenv').config();
 const express = require('express');
@@ -17,7 +17,7 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // =========================================================
-// SECURITY & PERFORMANCE MIDDLEWARE
+// MIDDLEWARE
 // =========================================================
 app.use(compression());
 app.use(helmet({
@@ -52,16 +52,11 @@ if (!fs.existsSync(uploadsPath)) {
 app.use('/uploads', express.static(uploadsPath, {
   maxAge: '1d',
   etag: true,
-  lastModified: true,
-  setHeaders: (res, filePath) => {
-    if (filePath.endsWith('.jpg') || filePath.endsWith('.jpeg') || filePath.endsWith('.png')) {
-      res.set('Cache-Control', 'public, max-age=86400');
-    }
-  }
+  lastModified: true
 }));
 
 // =========================================================
-// MONGODB CONNECTION
+// MONGODB
 // =========================================================
 const mongooseOptions = {
   maxPoolSize: 10,
@@ -77,8 +72,6 @@ const mongooseOptions = {
 // =========================================================
 // SCHEMALAR
 // =========================================================
-
-// Qism Schema
 const QismSchema = new mongoose.Schema({
   qismRaqami: { type: Number, required: true },
   video: { type: String, required: true },
@@ -88,7 +81,6 @@ const QismSchema = new mongoose.Schema({
   dislikedBy: [{ type: String }]
 });
 
-// Movie Schema
 const MovieSchema = new mongoose.Schema({
   nomi: { type: String, required: true, trim: true, index: true },
   turi: { type: String, enum: ['film', 'serial'], required: true, index: true },
@@ -102,7 +94,6 @@ const MovieSchema = new mongoose.Schema({
   video: { type: String, default: '' },
   qismlar: [QismSchema],
   views: { type: Number, default: 0 },
-  rating: { type: Number, default: 0 },
   likes: { type: Number, default: 0 },
   dislikes: { type: Number, default: 0 },
   likedBy: [{ type: String }],
@@ -113,7 +104,6 @@ MovieSchema.index({ nomi: 'text' });
 MovieSchema.index({ turi: 1, yili: -1 });
 MovieSchema.index({ janr: 1, yili: -1 });
 
-// Admin Schema
 const AdminSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true, trim: true },
   password: { type: String, required: true },
@@ -139,66 +129,34 @@ const Movie = mongoose.model('Movie', MovieSchema);
 const Admin = mongoose.model('Admin', AdminSchema);
 
 // =========================================================
-// AUTH MIDDLEWARE
+// AUTH
 // =========================================================
 const auth = async (req, res, next) => {
   try {
     const token = req.header('Authorization')?.replace('Bearer ', '');
-    
     if (!token) {
-      return res.status(401).json({
-        success: false,
-        message: 'Token topilmadi. Iltimos, tizimga kiring.'
-      });
+      return res.status(401).json({ success: false, message: 'Token topilmadi' });
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'default_secret');
-    
     const admin = await Admin.findById(decoded.id).select('username tokenVersion');
     
     if (!admin) {
-      return res.status(401).json({
-        success: false,
-        message: 'Admin topilmadi. Iltimos, qayta kiring.'
-      });
+      return res.status(401).json({ success: false, message: 'Admin topilmadi' });
     }
 
     if (decoded.tokenVersion !== admin.tokenVersion) {
       return res.status(401).json({
         success: false,
-        message: 'Sizning ma\'lumotlaringiz boshqa qurilmada o\'zgartirilgan. Iltimos, qayta kiring.',
+        message: 'Ma\'lumotlar o\'zgartirilgan. Qayta kiring.',
         forceLogout: true
       });
     }
 
-    req.admin = {
-      id: admin._id,
-      username: admin.username,
-      tokenVersion: admin.tokenVersion
-    };
-    
+    req.admin = { id: admin._id, username: admin.username, tokenVersion: admin.tokenVersion };
     next();
   } catch (error) {
-    console.error('Auth xatosi:', error);
-    
-    if (error.name === 'JsonWebTokenError') {
-      return res.status(401).json({
-        success: false,
-        message: 'Noto\'g\'ri token.'
-      });
-    }
-    
-    if (error.name === 'TokenExpiredError') {
-      return res.status(401).json({
-        success: false,
-        message: 'Token muddati tugagan. Iltimos, qayta kiring.'
-      });
-    }
-    
-    res.status(500).json({
-      success: false,
-      message: 'Server xatosi: ' + error.message
-    });
+    res.status(401).json({ success: false, message: 'Noto\'g\'ri token' });
   }
 };
 
@@ -210,7 +168,6 @@ class Cache {
     this.store = new Map();
     this.defaultTTL = 30000;
   }
-
   get(key) {
     const item = this.store.get(key);
     if (!item) return null;
@@ -220,13 +177,10 @@ class Cache {
     }
     return item.data;
   }
-
   set(key, data, ttl = this.defaultTTL) {
     this.store.set(key, { data, timestamp: Date.now(), ttl });
   }
-
   clear() { this.store.clear(); }
-
   clean() {
     const now = Date.now();
     for (const [key, item] of this.store) {
@@ -244,143 +198,78 @@ setInterval(() => cache.clean(), 5 * 60 * 1000);
 // ROUTE'LAR
 // =========================================================
 app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
-    uptime: process.uptime(),
-    cacheSize: cache.store.size
-  });
+  res.json({ status: 'OK', uptime: process.uptime(), cacheSize: cache.store.size });
 });
 
 app.get('/', (req, res) => {
-  res.json({ 
-    success: true, 
-    message: '🎬 MovieHub API', 
-    version: '1.0.0'
-  });
+  res.json({ success: true, message: '🎬 MovieHub API', version: '1.0.0' });
 });
 
 // =========================================================
 // ADMIN ROUTE'LAR
 // =========================================================
-
 app.post('/api/admin/login', async (req, res) => {
   try {
     const { username, password } = req.body;
-    
     if (!username || !password) {
-      return res.status(400).json({
-        success: false,
-        message: 'Username va parol talab qilinadi'
-      });
+      return res.status(400).json({ success: false, message: 'Username va parol talab qilinadi' });
     }
 
     const admin = await Admin.findOne({ username });
-    
     if (!admin) {
-      return res.status(401).json({
-        success: false,
-        message: 'Noto\'g\'ri ma\'lumotlar'
-      });
+      return res.status(401).json({ success: false, message: 'Noto\'g\'ri ma\'lumotlar' });
     }
 
     const isValid = await bcrypt.compare(password, admin.password);
-    
     if (!isValid) {
-      return res.status(401).json({
-        success: false,
-        message: 'Noto\'g\'ri ma\'lumotlar'
-      });
+      return res.status(401).json({ success: false, message: 'Noto\'g\'ri ma\'lumotlar' });
     }
 
     const token = jwt.sign(
-      { 
-        id: admin._id, 
-        username: admin.username,
-        tokenVersion: admin.tokenVersion || 0
-      },
+      { id: admin._id, username: admin.username, tokenVersion: admin.tokenVersion || 0 },
       process.env.JWT_SECRET || 'default_secret',
       { expiresIn: '7d' }
     );
     
-    res.json({
-      success: true,
-      token,
-      admin: {
-        id: admin._id,
-        username: admin.username
-      }
-    });
+    res.json({ success: true, token, admin: { id: admin._id, username: admin.username } });
   } catch (error) {
-    console.error('Login xatosi:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server xatosi'
-    });
+    res.status(500).json({ success: false, message: 'Server xatosi' });
   }
 });
 
 app.get('/api/admin/me', auth, async (req, res) => {
   try {
     const admin = await Admin.findById(req.admin.id).select('-password');
-    if (!admin) {
-      return res.status(404).json({
-        success: false,
-        message: 'Admin topilmadi'
-      });
-    }
-    res.json({
-      success: true,
-      data: admin
-    });
+    res.json({ success: true, data: admin });
   } catch (error) {
-    console.error('Admin ma\'lumotlarini olish xatosi:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server xatosi'
-    });
+    res.status(500).json({ success: false, message: 'Server xatosi' });
   }
 });
 
 app.put('/api/admin/update', auth, async (req, res) => {
   try {
     const { username, currentPassword, newPassword } = req.body;
-    const adminId = req.admin.id;
-    
-    const admin = await Admin.findById(adminId);
+    const admin = await Admin.findById(req.admin.id);
     if (!admin) {
-      return res.status(404).json({
-        success: false,
-        message: 'Admin topilmadi'
-      });
+      return res.status(404).json({ success: false, message: 'Admin topilmadi' });
     }
 
     if (username && username !== admin.username) {
-      const existingAdmin = await Admin.findOne({ username });
-      if (existingAdmin) {
-        return res.status(400).json({
-          success: false,
-          message: 'Bu username allaqachon mavjud'
-        });
+      const existing = await Admin.findOne({ username });
+      if (existing) {
+        return res.status(400).json({ success: false, message: 'Bu username mavjud' });
       }
       admin.username = username;
     }
 
     if (newPassword) {
       if (!currentPassword) {
-        return res.status(400).json({
-          success: false,
-          message: 'Parolni o\'zgartirish uchun joriy parolni kiriting'
-        });
+        return res.status(400).json({ success: false, message: 'Joriy parolni kiriting' });
       }
-      
       const isValid = await bcrypt.compare(currentPassword, admin.password);
       if (!isValid) {
-        return res.status(401).json({
-          success: false,
-          message: 'Joriy parol noto\'g\'ri'
-        });
+        return res.status(401).json({ success: false, message: 'Joriy parol noto\'g\'ri' });
       }
-      
       const salt = await bcrypt.genSalt(10);
       admin.password = await bcrypt.hash(newPassword, salt);
       admin.tokenVersion = (admin.tokenVersion || 0) + 1;
@@ -389,50 +278,31 @@ app.put('/api/admin/update', auth, async (req, res) => {
     await admin.save();
 
     const token = jwt.sign(
-      { 
-        id: admin._id, 
-        username: admin.username,
-        tokenVersion: admin.tokenVersion
-      },
+      { id: admin._id, username: admin.username, tokenVersion: admin.tokenVersion },
       process.env.JWT_SECRET || 'default_secret',
       { expiresIn: '7d' }
     );
 
-    res.json({
-      success: true,
-      message: 'Ma\'lumotlar muvaffaqiyatli yangilandi',
-      token: token,
-      admin: {
-        id: admin._id,
-        username: admin.username
-      }
-    });
+    res.json({ success: true, message: 'Ma\'lumotlar yangilandi', token, admin: { id: admin._id, username: admin.username } });
   } catch (error) {
-    console.error('Admin yangilash xatosi:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server xatosi: ' + error.message
-    });
+    res.status(500).json({ success: false, message: 'Server xatosi' });
   }
 });
 
 // =========================================================
 // MOVIES ROUTE'LAR
 // =========================================================
-
 app.get('/api/movies', async (req, res) => {
   try {
-    const cacheKey = 'all_movies';
-    const cached = cache.get(cacheKey);
+    const cached = cache.get('all_movies');
     if (cached) {
       return res.json({ success: true, count: cached.length, data: cached, cached: true });
     }
-
-    const movies = await Movie.find().sort({ createdAt: -1 }).select('-__v').lean().limit(50);
-    cache.set(cacheKey, movies);
+    const movies = await Movie.find().sort({ createdAt: -1 }).lean().limit(50);
+    cache.set('all_movies', movies);
     res.json({ success: true, count: movies.length, data: movies });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Server xatosi' });
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 
@@ -442,72 +312,42 @@ app.get('/api/movies/search', async (req, res) => {
     if (!q || q.trim() === '') {
       return res.json({ success: true, data: [] });
     }
-
-    const cacheKey = `search_${q.trim().toLowerCase()}`;
-    const cached = cache.get(cacheKey);
-    if (cached) {
-      return res.json({ success: true, count: cached.length, data: cached, cached: true });
-    }
-
     const movies = await Movie.find({
-      $or: [
-        { nomi: { $regex: q.trim(), $options: 'i' } },
-        { janr: { $regex: q.trim(), $options: 'i' } }
-      ]
-    }).sort({ createdAt: -1 }).select('-__v').lean().limit(50);
-
-    cache.set(cacheKey, movies, 15000);
+      nomi: { $regex: q.trim(), $options: 'i' }
+    }).sort({ createdAt: -1 }).lean();
     res.json({ success: true, count: movies.length, data: movies });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Server xatosi' });
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 
 app.get('/api/movies/:id', async (req, res) => {
   try {
-    const { id } = req.params;
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ success: false, message: 'Noto\'g\'ri ID' });
-    }
-
-    const cacheKey = `movie_${id}`;
-    const cached = cache.get(cacheKey);
-    if (cached) {
-      return res.json({ success: true, data: cached, cached: true });
-    }
-
-    const movie = await Movie.findById(id).select('-__v').lean();
+    const movie = await Movie.findById(req.params.id).lean();
     if (!movie) {
       return res.status(404).json({ success: false, message: 'Film topilmadi' });
     }
-
-    Movie.findByIdAndUpdate(id, { $inc: { views: 1 } }).catch(() => {});
-    cache.set(cacheKey, movie, 60000);
     res.json({ success: true, data: movie });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Server xatosi' });
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 
 // =========================================================
-// LIKE / DISLIKE - FILM UCHUN
+// LIKE / DISLIKE (TUZATILGAN)
 // =========================================================
 
 app.post('/api/movies/:id/like', async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.headers['x-forwarded-for'] || req.ip || 'anonymous';
-    
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ success: false, message: 'Noto\'g\'ri ID' });
-    }
+    const userKey = userId.toString();
 
     const movie = await Movie.findById(id);
     if (!movie) {
       return res.status(404).json({ success: false, message: 'Film topilmadi' });
     }
 
-    const userKey = userId.toString();
     const alreadyLiked = movie.likedBy.includes(userKey);
     const alreadyDisliked = movie.dislikedBy.includes(userKey);
 
@@ -524,6 +364,9 @@ app.post('/api/movies/:id/like', async (req, res) => {
     }
 
     await movie.save();
+
+    // Keshni tozalash
+    cache.clear();
 
     res.json({
       success: true,
@@ -544,17 +387,13 @@ app.post('/api/movies/:id/dislike', async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.headers['x-forwarded-for'] || req.ip || 'anonymous';
-    
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ success: false, message: 'Noto\'g\'ri ID' });
-    }
+    const userKey = userId.toString();
 
     const movie = await Movie.findById(id);
     if (!movie) {
       return res.status(404).json({ success: false, message: 'Film topilmadi' });
     }
 
-    const userKey = userId.toString();
     const alreadyLiked = movie.likedBy.includes(userKey);
     const alreadyDisliked = movie.dislikedBy.includes(userKey);
 
@@ -571,6 +410,9 @@ app.post('/api/movies/:id/dislike', async (req, res) => {
     }
 
     await movie.save();
+
+    // Keshni tozalash
+    cache.clear();
 
     res.json({
       success: true,
@@ -595,10 +437,7 @@ app.post('/api/movies/:id/qism/:qismIndex/like', async (req, res) => {
   try {
     const { id, qismIndex } = req.params;
     const userId = req.headers['x-forwarded-for'] || req.ip || 'anonymous';
-    
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ success: false, message: 'Noto\'g\'ri ID' });
-    }
+    const userKey = userId.toString();
 
     const movie = await Movie.findById(id);
     if (!movie) {
@@ -611,7 +450,6 @@ app.post('/api/movies/:id/qism/:qismIndex/like', async (req, res) => {
     }
 
     const qism = movie.qismlar[index];
-    const userKey = userId.toString();
     const alreadyLiked = qism.likedBy.includes(userKey);
     const alreadyDisliked = qism.dislikedBy.includes(userKey);
 
@@ -628,6 +466,7 @@ app.post('/api/movies/:id/qism/:qismIndex/like', async (req, res) => {
     }
 
     await movie.save();
+    cache.clear();
 
     res.json({
       success: true,
@@ -649,10 +488,7 @@ app.post('/api/movies/:id/qism/:qismIndex/dislike', async (req, res) => {
   try {
     const { id, qismIndex } = req.params;
     const userId = req.headers['x-forwarded-for'] || req.ip || 'anonymous';
-    
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ success: false, message: 'Noto\'g\'ri ID' });
-    }
+    const userKey = userId.toString();
 
     const movie = await Movie.findById(id);
     if (!movie) {
@@ -665,7 +501,6 @@ app.post('/api/movies/:id/qism/:qismIndex/dislike', async (req, res) => {
     }
 
     const qism = movie.qismlar[index];
-    const userKey = userId.toString();
     const alreadyLiked = qism.likedBy.includes(userKey);
     const alreadyDisliked = qism.dislikedBy.includes(userKey);
 
@@ -682,6 +517,7 @@ app.post('/api/movies/:id/qism/:qismIndex/dislike', async (req, res) => {
     }
 
     await movie.save();
+    cache.clear();
 
     res.json({
       success: true,
@@ -703,17 +539,12 @@ app.get('/api/movies/:id/rating', async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.headers['x-forwarded-for'] || req.ip || 'anonymous';
-    
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ success: false, message: 'Noto\'g\'ri ID' });
-    }
+    const userKey = userId.toString();
 
     const movie = await Movie.findById(id).select('likes dislikes likedBy dislikedBy qismlar');
     if (!movie) {
       return res.status(404).json({ success: false, message: 'Film topilmadi' });
     }
-
-    const userKey = userId.toString();
 
     const qismRating = movie.qismlar.map((qism, index) => ({
       index,
@@ -726,15 +557,14 @@ app.get('/api/movies/:id/rating', async (req, res) => {
     res.json({
       success: true,
       data: {
-        likes: movie.likes,
-        dislikes: movie.dislikes,
+        likes: movie.likes || 0,
+        dislikes: movie.dislikes || 0,
         userLiked: movie.likedBy.includes(userKey),
         userDisliked: movie.dislikedBy.includes(userKey),
         qismlar: qismRating
       }
     });
   } catch (error) {
-    console.error('Rating xatosi:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -742,7 +572,6 @@ app.get('/api/movies/:id/rating', async (req, res) => {
 // =========================================================
 // ADMIN CRUD
 // =========================================================
-
 app.post('/api/movies', auth, async (req, res) => {
   try {
     const movie = await Movie.create(req.body);
@@ -775,12 +604,13 @@ app.delete('/api/movies/:id', auth, async (req, res) => {
   }
 });
 
+// =========================================================
 // 404
+// =========================================================
 app.use((req, res) => {
   res.status(404).json({ success: false, message: 'Manzil topilmadi' });
 });
 
-// Error handler
 app.use((err, req, res, next) => {
   console.error('Server error:', err.message);
   res.status(500).json({ success: false, message: 'Server xatosi' });
@@ -805,15 +635,9 @@ async function initAdmin() {
     if (count === 0) {
       const username = process.env.ADMIN_USERNAME || 'admin';
       const password = process.env.ADMIN_PASSWORD || 'kuchli_parol123';
-      
       const salt = await bcrypt.genSalt(10);
       const hashedPassword = await bcrypt.hash(password, salt);
-      
-      await Admin.create({ 
-        username, 
-        password: hashedPassword,
-        tokenVersion: 0
-      });
+      await Admin.create({ username, password: hashedPassword, tokenVersion: 0 });
       console.log(`✅ Admin yaratildi: ${username} / ${password}`);
     }
   } catch (error) {
@@ -824,10 +648,8 @@ async function initAdmin() {
 async function startServer() {
   await connectDB();
   await initAdmin();
-  
   app.listen(PORT, () => {
     console.log(`🚀 Server ${PORT}-portda`);
-    console.log(`💾 Kesh hajmi: ${cache.store.size}`);
     console.log(`🔑 Login: admin / kuchli_parol123`);
   });
 }
