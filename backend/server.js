@@ -1,5 +1,5 @@
 // =========================================================
-// MOVIEHUB BACKEND - HIGH PERFORMANCE
+// MOVIEHUB BACKEND - YANGILANGAN (TO'LIQ)
 // =========================================================
 require('dotenv').config();
 const express = require('express');
@@ -102,8 +102,20 @@ MovieSchema.index({ janr: 1, yili: -1 });
 
 const AdminSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true, trim: true },
-  password: { type: String, required: true }
+  password: { type: String, required: true },
+  tokenVersion: { type: Number, default: 0 }
 }, { timestamps: true });
+
+AdminSchema.pre('save', async function(next) {
+  if (!this.isModified('password')) return next();
+  try {
+    const salt = await bcrypt.genSalt(10);
+    this.password = await bcrypt.hash(this.password, salt);
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
 
 AdminSchema.methods.comparePassword = async function(candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
@@ -113,18 +125,66 @@ const Movie = mongoose.model('Movie', MovieSchema);
 const Admin = mongoose.model('Admin', AdminSchema);
 
 // =========================================================
-// AUTH
+// AUTH MIDDLEWARE (YANGILANGAN - tokenVersion bilan)
 // =========================================================
-const auth = (req, res, next) => {
+const auth = async (req, res, next) => {
   try {
     const token = req.header('Authorization')?.replace('Bearer ', '');
+    
     if (!token) {
-      return res.status(401).json({ success: false, message: 'Token topilmadi' });
+      return res.status(401).json({
+        success: false,
+        message: 'Token topilmadi. Iltimos, tizimga kiring.'
+      });
     }
-    req.admin = jwt.verify(token, process.env.JWT_SECRET || 'default_secret');
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'default_secret');
+    
+    const admin = await Admin.findById(decoded.id).select('username tokenVersion');
+    
+    if (!admin) {
+      return res.status(401).json({
+        success: false,
+        message: 'Admin topilmadi. Iltimos, qayta kiring.'
+      });
+    }
+
+    if (decoded.tokenVersion !== admin.tokenVersion) {
+      return res.status(401).json({
+        success: false,
+        message: 'Sizning ma\'lumotlaringiz boshqa qurilmada o\'zgartirilgan. Iltimos, qayta kiring.',
+        forceLogout: true
+      });
+    }
+
+    req.admin = {
+      id: admin._id,
+      username: admin.username,
+      tokenVersion: admin.tokenVersion
+    };
+    
     next();
   } catch (error) {
-    res.status(401).json({ success: false, message: 'Noto\'g\'ri token' });
+    console.error('Auth xatosi:', error);
+    
+    if (error.name === 'JsonWebTokenError') {
+      return res.status(401).json({
+        success: false,
+        message: 'Noto\'g\'ri token.'
+      });
+    }
+    
+    if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({
+        success: false,
+        message: 'Token muddati tugagan. Iltimos, qayta kiring.'
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Server xatosi: ' + error.message
+    });
   }
 };
 
@@ -185,7 +245,171 @@ app.get('/', (req, res) => {
   });
 });
 
-// MOVIES
+// =========================================================
+// ADMIN ROUTE'LAR
+// =========================================================
+
+// Admin login
+app.post('/api/admin/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    
+    if (!username || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Username va parol talab qilinadi'
+      });
+    }
+
+    const admin = await Admin.findOne({ username });
+    
+    if (!admin) {
+      return res.status(401).json({
+        success: false,
+        message: 'Noto\'g\'ri ma\'lumotlar'
+      });
+    }
+
+    const isValid = await bcrypt.compare(password, admin.password);
+    
+    if (!isValid) {
+      return res.status(401).json({
+        success: false,
+        message: 'Noto\'g\'ri ma\'lumotlar'
+      });
+    }
+
+    const token = jwt.sign(
+      { 
+        id: admin._id, 
+        username: admin.username,
+        tokenVersion: admin.tokenVersion || 0
+      },
+      process.env.JWT_SECRET || 'default_secret',
+      { expiresIn: '7d' }
+    );
+    
+    res.json({
+      success: true,
+      token,
+      admin: {
+        id: admin._id,
+        username: admin.username
+      }
+    });
+  } catch (error) {
+    console.error('Login xatosi:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server xatosi'
+    });
+  }
+});
+
+// GET - Joriy admin ma'lumotlari (TO'G'RILANGAN)
+app.get('/api/admin/me', auth, async (req, res) => {
+  try {
+    const admin = await Admin.findById(req.admin.id).select('-password');
+    if (!admin) {
+      return res.status(404).json({
+        success: false,
+        message: 'Admin topilmadi'
+      });
+    }
+    res.json({
+      success: true,
+      data: admin
+    });
+  } catch (error) {
+    console.error('Admin ma\'lumotlarini olish xatosi:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server xatosi'
+    });
+  }
+});
+
+// PUT - Admin ma'lumotlarini yangilash
+app.put('/api/admin/update', auth, async (req, res) => {
+  try {
+    const { username, currentPassword, newPassword } = req.body;
+    const adminId = req.admin.id;
+    
+    const admin = await Admin.findById(adminId);
+    if (!admin) {
+      return res.status(404).json({
+        success: false,
+        message: 'Admin topilmadi'
+      });
+    }
+
+    if (username && username !== admin.username) {
+      const existingAdmin = await Admin.findOne({ username });
+      if (existingAdmin) {
+        return res.status(400).json({
+          success: false,
+          message: 'Bu username allaqachon mavjud'
+        });
+      }
+      admin.username = username;
+    }
+
+    if (newPassword) {
+      if (!currentPassword) {
+        return res.status(400).json({
+          success: false,
+          message: 'Parolni o\'zgartirish uchun joriy parolni kiriting'
+        });
+      }
+      
+      const isValid = await bcrypt.compare(currentPassword, admin.password);
+      if (!isValid) {
+        return res.status(401).json({
+          success: false,
+          message: 'Joriy parol noto\'g\'ri'
+        });
+      }
+      
+      const salt = await bcrypt.genSalt(10);
+      admin.password = await bcrypt.hash(newPassword, salt);
+      admin.tokenVersion = (admin.tokenVersion || 0) + 1;
+    }
+
+    await admin.save();
+
+    const token = jwt.sign(
+      { 
+        id: admin._id, 
+        username: admin.username,
+        tokenVersion: admin.tokenVersion
+      },
+      process.env.JWT_SECRET || 'default_secret',
+      { expiresIn: '7d' }
+    );
+
+    res.json({
+      success: true,
+      message: 'Ma\'lumotlar muvaffaqiyatli yangilandi',
+      token: token,
+      admin: {
+        id: admin._id,
+        username: admin.username
+      }
+    });
+  } catch (error) {
+    console.error('Admin yangilash xatosi:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server xatosi: ' + error.message
+    });
+  }
+});
+
+// =========================================================
+// MOVIES ROUTE'LAR
+// =========================================================
+
+// GET - Barcha filmlar
 app.get('/api/movies', async (req, res) => {
   try {
     const cacheKey = 'all_movies';
@@ -202,6 +426,7 @@ app.get('/api/movies', async (req, res) => {
   }
 });
 
+// GET - Qidiruv
 app.get('/api/movies/search', async (req, res) => {
   try {
     const { q } = req.query;
@@ -229,6 +454,7 @@ app.get('/api/movies/search', async (req, res) => {
   }
 });
 
+// GET - Bitta film
 app.get('/api/movies/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -255,37 +481,7 @@ app.get('/api/movies/:id', async (req, res) => {
   }
 });
 
-// ADMIN
-app.post('/api/admin/login', async (req, res) => {
-  try {
-    const { username, password } = req.body;
-    if (!username || !password) {
-      return res.status(400).json({ success: false, message: 'Username va parol talab qilinadi' });
-    }
-
-    const admin = await Admin.findOne({ username }).lean();
-    if (!admin) {
-      return res.status(401).json({ success: false, message: 'Noto\'g\'ri ma\'lumotlar' });
-    }
-
-    const isValid = await bcrypt.compare(password, admin.password);
-    if (!isValid) {
-      return res.status(401).json({ success: false, message: 'Noto\'g\'ri ma\'lumotlar' });
-    }
-
-    const token = jwt.sign(
-      { id: admin._id, username: admin.username },
-      process.env.JWT_SECRET || 'default_secret',
-      { expiresIn: '7d' }
-    );
-    
-    res.json({ success: true, token, admin: { id: admin._id, username: admin.username } });
-  } catch (error) {
-    res.status(500).json({ success: false, message: 'Server xatosi' });
-  }
-});
-
-// ADMIN CRUD
+// POST - Film qo'shish (Admin)
 app.post('/api/movies', auth, async (req, res) => {
   try {
     const movie = await Movie.create(req.body);
@@ -296,6 +492,7 @@ app.post('/api/movies', auth, async (req, res) => {
   }
 });
 
+// PUT - Film yangilash (Admin)
 app.put('/api/movies/:id', auth, async (req, res) => {
   try {
     const movie = await Movie.findByIdAndUpdate(req.params.id, req.body, { new: true });
@@ -307,6 +504,7 @@ app.put('/api/movies/:id', auth, async (req, res) => {
   }
 });
 
+// DELETE - Film o'chirish (Admin)
 app.delete('/api/movies/:id', auth, async (req, res) => {
   try {
     const movie = await Movie.findByIdAndDelete(req.params.id);
@@ -352,7 +550,11 @@ async function initAdmin() {
       const salt = await bcrypt.genSalt(10);
       const hashedPassword = await bcrypt.hash(password, salt);
       
-      await Admin.create({ username, password: hashedPassword });
+      await Admin.create({ 
+        username, 
+        password: hashedPassword,
+        tokenVersion: 0
+      });
       console.log(`✅ Admin yaratildi: ${username} / ${password}`);
     }
   } catch (error) {
