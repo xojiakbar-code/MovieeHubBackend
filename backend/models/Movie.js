@@ -1,7 +1,16 @@
 // =========================================================
-// MOVIE MODELI - LIKE/DISLIKE QO'SHILGAN
+// MOVIE MODELI - QISMLAR UCHUN LIKE/DISLIKE QO'SHILGAN
 // =========================================================
 const mongoose = require('mongoose');
+
+const QismSchema = new mongoose.Schema({
+  qismRaqami: { type: Number, required: true },
+  video: { type: String, required: true },
+  likes: { type: Number, default: 0 },
+  dislikes: { type: Number, default: 0 },
+  likedBy: [{ type: String }],
+  dislikedBy: [{ type: String }]
+});
 
 const MovieSchema = new mongoose.Schema({
   nomi: { type: String, required: true, trim: true },
@@ -14,16 +23,12 @@ const MovieSchema = new mongoose.Schema({
   davomiyligi: { type: String, required: true, trim: true },
   rasm: { type: String, required: true },
   video: { type: String, default: '' },
-  qismlar: [{
-    qismRaqami: { type: Number, required: true },
-    video: { type: String, required: true }
-  }],
+  qismlar: [QismSchema],
   views: { type: Number, default: 0 },
   rating: { type: Number, default: 0 },
-  // ===== LIKE/DISLIKE =====
   likes: { type: Number, default: 0 },
   dislikes: { type: Number, default: 0 },
-  likedBy: [{ type: String }], // Foydalanuvchi ID yoki IP
+  likedBy: [{ type: String }],
   dislikedBy: [{ type: String }]
 }, { timestamps: true });
 
