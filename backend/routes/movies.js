@@ -1,11 +1,49 @@
-// =========================================================
-// MOVIES ROUTE'LAR - LIKE/DISLIKE (QISMLAR UCHUN HAM)
-// =========================================================
 const express = require('express');
 const mongoose = require('mongoose');
 const Movie = require('../models/Movie');
 const auth = require('../middleware/auth');
 const router = express.Router();
+
+// =========================================================
+// GET - Barcha filmlar
+// =========================================================
+router.get('/', async (req, res) => {
+  try {
+    const movies = await Movie.find().sort({ createdAt: -1 }).lean();
+    res.json({ success: true, count: movies.length, data: movies });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// GET - Qidiruv
+router.get('/search', async (req, res) => {
+  try {
+    const { q } = req.query;
+    if (!q || q.trim() === '') {
+      return res.json({ success: true, data: [] });
+    }
+    const movies = await Movie.find({
+      nomi: { $regex: q.trim(), $options: 'i' }
+    }).sort({ createdAt: -1 }).lean();
+    res.json({ success: true, count: movies.length, data: movies });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// GET - Bitta film
+router.get('/:id', async (req, res) => {
+  try {
+    const movie = await Movie.findById(req.params.id).lean();
+    if (!movie) {
+      return res.status(404).json({ success: false, message: 'Film topilmadi' });
+    }
+    res.json({ success: true, data: movie });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
 
 // =========================================================
 // LIKE / DISLIKE - FILM UCHUN
@@ -30,11 +68,15 @@ router.post('/:id/like', async (req, res) => {
     const alreadyDisliked = movie.dislikedBy.includes(userKey);
 
     if (alreadyLiked) {
+      // Like ni o'chirish
       movie.likes = Math.max(0, movie.likes - 1);
       movie.likedBy = movie.likedBy.filter(id => id !== userKey);
     } else {
+      // Like qo'shish
       movie.likes += 1;
       movie.likedBy.push(userKey);
+      
+      // Agar dislike bosgan bo'lsa, uni o'chirish
       if (alreadyDisliked) {
         movie.dislikes = Math.max(0, movie.dislikes - 1);
         movie.dislikedBy = movie.dislikedBy.filter(id => id !== userKey);
@@ -77,11 +119,15 @@ router.post('/:id/dislike', async (req, res) => {
     const alreadyDisliked = movie.dislikedBy.includes(userKey);
 
     if (alreadyDisliked) {
+      // Dislike ni o'chirish
       movie.dislikes = Math.max(0, movie.dislikes - 1);
       movie.dislikedBy = movie.dislikedBy.filter(id => id !== userKey);
     } else {
+      // Dislike qo'shish
       movie.dislikes += 1;
       movie.dislikedBy.push(userKey);
+      
+      // Agar like bosgan bo'lsa, uni o'chirish
       if (alreadyLiked) {
         movie.likes = Math.max(0, movie.likes - 1);
         movie.likedBy = movie.likedBy.filter(id => id !== userKey);
@@ -234,7 +280,6 @@ router.get('/:id/rating', async (req, res) => {
 
     const userKey = userId.toString();
 
-    // Qismlar uchun rating
     const qismRating = movie.qismlar.map((qism, index) => ({
       index,
       likes: qism.likes || 0,
@@ -246,8 +291,8 @@ router.get('/:id/rating', async (req, res) => {
     res.json({
       success: true,
       data: {
-        likes: movie.likes,
-        dislikes: movie.dislikes,
+        likes: movie.likes || 0,
+        dislikes: movie.dislikes || 0,
         userLiked: movie.likedBy.includes(userKey),
         userDisliked: movie.dislikedBy.includes(userKey),
         qismlar: qismRating
@@ -259,6 +304,40 @@ router.get('/:id/rating', async (req, res) => {
   }
 });
 
-// ... (boshqa route'lar)
+// POST - Film qo'shish (Admin)
+router.post('/', auth, async (req, res) => {
+  try {
+    const movie = await Movie.create(req.body);
+    res.status(201).json({ success: true, data: movie });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// PUT - Film yangilash (Admin)
+router.put('/:id', auth, async (req, res) => {
+  try {
+    const movie = await Movie.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    if (!movie) {
+      return res.status(404).json({ success: false, message: 'Film topilmadi' });
+    }
+    res.json({ success: true, data: movie });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// DELETE - Film o'chirish (Admin)
+router.delete('/:id', auth, async (req, res) => {
+  try {
+    const movie = await Movie.findByIdAndDelete(req.params.id);
+    if (!movie) {
+      return res.status(404).json({ success: false, message: 'Film topilmadi' });
+    }
+    res.json({ success: true, message: 'Film o\'chirildi' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
 
 module.exports = router;
