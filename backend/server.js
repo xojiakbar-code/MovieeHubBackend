@@ -1,5 +1,5 @@
 // =========================================================
-// MOVIEHUB BACKEND - YANGILANGAN (TO'LIQ)
+// MOVIEHUB BACKEND - TO'LIQ (LIKE/DISLIKE BILAN)
 // =========================================================
 require('dotenv').config();
 const express = require('express');
@@ -77,6 +77,18 @@ const mongooseOptions = {
 // =========================================================
 // SCHEMALAR
 // =========================================================
+
+// Qism Schema
+const QismSchema = new mongoose.Schema({
+  qismRaqami: { type: Number, required: true },
+  video: { type: String, required: true },
+  likes: { type: Number, default: 0 },
+  dislikes: { type: Number, default: 0 },
+  likedBy: [{ type: String }],
+  dislikedBy: [{ type: String }]
+});
+
+// Movie Schema
 const MovieSchema = new mongoose.Schema({
   nomi: { type: String, required: true, trim: true, index: true },
   turi: { type: String, enum: ['film', 'serial'], required: true, index: true },
@@ -88,18 +100,20 @@ const MovieSchema = new mongoose.Schema({
   davomiyligi: { type: String, required: true, trim: true },
   rasm: { type: String, required: true },
   video: { type: String, default: '' },
-  qismlar: [{
-    qismRaqami: { type: Number, required: true },
-    video: { type: String, required: true }
-  }],
+  qismlar: [QismSchema],
   views: { type: Number, default: 0 },
-  rating: { type: Number, default: 0 }
+  rating: { type: Number, default: 0 },
+  likes: { type: Number, default: 0 },
+  dislikes: { type: Number, default: 0 },
+  likedBy: [{ type: String }],
+  dislikedBy: [{ type: String }]
 }, { timestamps: true });
 
 MovieSchema.index({ nomi: 'text' });
 MovieSchema.index({ turi: 1, yili: -1 });
 MovieSchema.index({ janr: 1, yili: -1 });
 
+// Admin Schema
 const AdminSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true, trim: true },
   password: { type: String, required: true },
@@ -125,7 +139,7 @@ const Movie = mongoose.model('Movie', MovieSchema);
 const Admin = mongoose.model('Admin', AdminSchema);
 
 // =========================================================
-// AUTH MIDDLEWARE (YANGILANGAN - tokenVersion bilan)
+// AUTH MIDDLEWARE
 // =========================================================
 const auth = async (req, res, next) => {
   try {
@@ -249,7 +263,6 @@ app.get('/', (req, res) => {
 // ADMIN ROUTE'LAR
 // =========================================================
 
-// Admin login
 app.post('/api/admin/login', async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -306,7 +319,6 @@ app.post('/api/admin/login', async (req, res) => {
   }
 });
 
-// GET - Joriy admin ma'lumotlari (TO'G'RILANGAN)
 app.get('/api/admin/me', auth, async (req, res) => {
   try {
     const admin = await Admin.findById(req.admin.id).select('-password');
@@ -329,7 +341,6 @@ app.get('/api/admin/me', auth, async (req, res) => {
   }
 });
 
-// PUT - Admin ma'lumotlarini yangilash
 app.put('/api/admin/update', auth, async (req, res) => {
   try {
     const { username, currentPassword, newPassword } = req.body;
@@ -409,7 +420,6 @@ app.put('/api/admin/update', auth, async (req, res) => {
 // MOVIES ROUTE'LAR
 // =========================================================
 
-// GET - Barcha filmlar
 app.get('/api/movies', async (req, res) => {
   try {
     const cacheKey = 'all_movies';
@@ -426,7 +436,6 @@ app.get('/api/movies', async (req, res) => {
   }
 });
 
-// GET - Qidiruv
 app.get('/api/movies/search', async (req, res) => {
   try {
     const { q } = req.query;
@@ -454,7 +463,6 @@ app.get('/api/movies/search', async (req, res) => {
   }
 });
 
-// GET - Bitta film
 app.get('/api/movies/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -481,7 +489,260 @@ app.get('/api/movies/:id', async (req, res) => {
   }
 });
 
-// POST - Film qo'shish (Admin)
+// =========================================================
+// LIKE / DISLIKE - FILM UCHUN
+// =========================================================
+
+app.post('/api/movies/:id/like', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.headers['x-forwarded-for'] || req.ip || 'anonymous';
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: 'Noto\'g\'ri ID' });
+    }
+
+    const movie = await Movie.findById(id);
+    if (!movie) {
+      return res.status(404).json({ success: false, message: 'Film topilmadi' });
+    }
+
+    const userKey = userId.toString();
+    const alreadyLiked = movie.likedBy.includes(userKey);
+    const alreadyDisliked = movie.dislikedBy.includes(userKey);
+
+    if (alreadyLiked) {
+      movie.likes = Math.max(0, movie.likes - 1);
+      movie.likedBy = movie.likedBy.filter(id => id !== userKey);
+    } else {
+      movie.likes += 1;
+      movie.likedBy.push(userKey);
+      if (alreadyDisliked) {
+        movie.dislikes = Math.max(0, movie.dislikes - 1);
+        movie.dislikedBy = movie.dislikedBy.filter(id => id !== userKey);
+      }
+    }
+
+    await movie.save();
+
+    res.json({
+      success: true,
+      data: {
+        likes: movie.likes,
+        dislikes: movie.dislikes,
+        userLiked: movie.likedBy.includes(userKey),
+        userDisliked: movie.dislikedBy.includes(userKey)
+      }
+    });
+  } catch (error) {
+    console.error('Like xatosi:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.post('/api/movies/:id/dislike', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.headers['x-forwarded-for'] || req.ip || 'anonymous';
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: 'Noto\'g\'ri ID' });
+    }
+
+    const movie = await Movie.findById(id);
+    if (!movie) {
+      return res.status(404).json({ success: false, message: 'Film topilmadi' });
+    }
+
+    const userKey = userId.toString();
+    const alreadyLiked = movie.likedBy.includes(userKey);
+    const alreadyDisliked = movie.dislikedBy.includes(userKey);
+
+    if (alreadyDisliked) {
+      movie.dislikes = Math.max(0, movie.dislikes - 1);
+      movie.dislikedBy = movie.dislikedBy.filter(id => id !== userKey);
+    } else {
+      movie.dislikes += 1;
+      movie.dislikedBy.push(userKey);
+      if (alreadyLiked) {
+        movie.likes = Math.max(0, movie.likes - 1);
+        movie.likedBy = movie.likedBy.filter(id => id !== userKey);
+      }
+    }
+
+    await movie.save();
+
+    res.json({
+      success: true,
+      data: {
+        likes: movie.likes,
+        dislikes: movie.dislikes,
+        userLiked: movie.likedBy.includes(userKey),
+        userDisliked: movie.dislikedBy.includes(userKey)
+      }
+    });
+  } catch (error) {
+    console.error('Dislike xatosi:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// =========================================================
+// LIKE / DISLIKE - QISM UCHUN
+// =========================================================
+
+app.post('/api/movies/:id/qism/:qismIndex/like', async (req, res) => {
+  try {
+    const { id, qismIndex } = req.params;
+    const userId = req.headers['x-forwarded-for'] || req.ip || 'anonymous';
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: 'Noto\'g\'ri ID' });
+    }
+
+    const movie = await Movie.findById(id);
+    if (!movie) {
+      return res.status(404).json({ success: false, message: 'Film topilmadi' });
+    }
+
+    const index = parseInt(qismIndex);
+    if (index < 0 || index >= movie.qismlar.length) {
+      return res.status(400).json({ success: false, message: 'Qism topilmadi' });
+    }
+
+    const qism = movie.qismlar[index];
+    const userKey = userId.toString();
+    const alreadyLiked = qism.likedBy.includes(userKey);
+    const alreadyDisliked = qism.dislikedBy.includes(userKey);
+
+    if (alreadyLiked) {
+      qism.likes = Math.max(0, qism.likes - 1);
+      qism.likedBy = qism.likedBy.filter(id => id !== userKey);
+    } else {
+      qism.likes += 1;
+      qism.likedBy.push(userKey);
+      if (alreadyDisliked) {
+        qism.dislikes = Math.max(0, qism.dislikes - 1);
+        qism.dislikedBy = qism.dislikedBy.filter(id => id !== userKey);
+      }
+    }
+
+    await movie.save();
+
+    res.json({
+      success: true,
+      data: {
+        likes: qism.likes,
+        dislikes: qism.dislikes,
+        userLiked: qism.likedBy.includes(userKey),
+        userDisliked: qism.dislikedBy.includes(userKey),
+        qismIndex: index
+      }
+    });
+  } catch (error) {
+    console.error('Qism like xatosi:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.post('/api/movies/:id/qism/:qismIndex/dislike', async (req, res) => {
+  try {
+    const { id, qismIndex } = req.params;
+    const userId = req.headers['x-forwarded-for'] || req.ip || 'anonymous';
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: 'Noto\'g\'ri ID' });
+    }
+
+    const movie = await Movie.findById(id);
+    if (!movie) {
+      return res.status(404).json({ success: false, message: 'Film topilmadi' });
+    }
+
+    const index = parseInt(qismIndex);
+    if (index < 0 || index >= movie.qismlar.length) {
+      return res.status(400).json({ success: false, message: 'Qism topilmadi' });
+    }
+
+    const qism = movie.qismlar[index];
+    const userKey = userId.toString();
+    const alreadyLiked = qism.likedBy.includes(userKey);
+    const alreadyDisliked = qism.dislikedBy.includes(userKey);
+
+    if (alreadyDisliked) {
+      qism.dislikes = Math.max(0, qism.dislikes - 1);
+      qism.dislikedBy = qism.dislikedBy.filter(id => id !== userKey);
+    } else {
+      qism.dislikes += 1;
+      qism.dislikedBy.push(userKey);
+      if (alreadyLiked) {
+        qism.likes = Math.max(0, qism.likes - 1);
+        qism.likedBy = qism.likedBy.filter(id => id !== userKey);
+      }
+    }
+
+    await movie.save();
+
+    res.json({
+      success: true,
+      data: {
+        likes: qism.likes,
+        dislikes: qism.dislikes,
+        userLiked: qism.likedBy.includes(userKey),
+        userDisliked: qism.dislikedBy.includes(userKey),
+        qismIndex: index
+      }
+    });
+  } catch (error) {
+    console.error('Qism dislike xatosi:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.get('/api/movies/:id/rating', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.headers['x-forwarded-for'] || req.ip || 'anonymous';
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: 'Noto\'g\'ri ID' });
+    }
+
+    const movie = await Movie.findById(id).select('likes dislikes likedBy dislikedBy qismlar');
+    if (!movie) {
+      return res.status(404).json({ success: false, message: 'Film topilmadi' });
+    }
+
+    const userKey = userId.toString();
+
+    const qismRating = movie.qismlar.map((qism, index) => ({
+      index,
+      likes: qism.likes || 0,
+      dislikes: qism.dislikes || 0,
+      userLiked: qism.likedBy.includes(userKey),
+      userDisliked: qism.dislikedBy.includes(userKey)
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        likes: movie.likes,
+        dislikes: movie.dislikes,
+        userLiked: movie.likedBy.includes(userKey),
+        userDisliked: movie.dislikedBy.includes(userKey),
+        qismlar: qismRating
+      }
+    });
+  } catch (error) {
+    console.error('Rating xatosi:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// =========================================================
+// ADMIN CRUD
+// =========================================================
+
 app.post('/api/movies', auth, async (req, res) => {
   try {
     const movie = await Movie.create(req.body);
@@ -492,7 +753,6 @@ app.post('/api/movies', auth, async (req, res) => {
   }
 });
 
-// PUT - Film yangilash (Admin)
 app.put('/api/movies/:id', auth, async (req, res) => {
   try {
     const movie = await Movie.findByIdAndUpdate(req.params.id, req.body, { new: true });
@@ -504,7 +764,6 @@ app.put('/api/movies/:id', auth, async (req, res) => {
   }
 });
 
-// DELETE - Film o'chirish (Admin)
 app.delete('/api/movies/:id', auth, async (req, res) => {
   try {
     const movie = await Movie.findByIdAndDelete(req.params.id);
@@ -577,10 +836,5 @@ startServer();
 
 process.on('SIGINT', () => {
   console.log('👋 Server to\'xtatilmoqda...');
-  mongoose.connection.close().then(() => process.exit(0));
-});
-
-process.on('SIGTERM', () => {
-  console.log('👋 Server to\'xtatilmoqda (SIGTERM)...');
   mongoose.connection.close().then(() => process.exit(0));
 });
