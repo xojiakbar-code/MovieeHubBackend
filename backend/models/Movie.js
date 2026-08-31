@@ -1,8 +1,6 @@
-// =========================================================
-// MOVIE MODELI - QISMLAR UCHUN LIKE/DISLIKE QO'SHILGAN
-// =========================================================
 const mongoose = require('mongoose');
 
+// Qism Schema
 const QismSchema = new mongoose.Schema({
   qismRaqami: { type: Number, required: true },
   video: { type: String, required: true },
@@ -12,6 +10,7 @@ const QismSchema = new mongoose.Schema({
   dislikedBy: [{ type: String }]
 });
 
+// Movie Schema
 const MovieSchema = new mongoose.Schema({
   nomi: { type: String, required: true, trim: true },
   turi: { type: String, enum: ['film', 'serial'], required: true },
@@ -25,7 +24,6 @@ const MovieSchema = new mongoose.Schema({
   video: { type: String, default: '' },
   qismlar: [QismSchema],
   views: { type: Number, default: 0 },
-  rating: { type: Number, default: 0 },
   likes: { type: Number, default: 0 },
   dislikes: { type: Number, default: 0 },
   likedBy: [{ type: String }],
