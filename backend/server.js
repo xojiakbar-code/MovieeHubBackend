@@ -1,5 +1,5 @@
 // =========================================================
-// MOVIEHUB BACKEND - TO'LIQ (OPTIMALLASHTIRILGAN)
+// MOVIEHUB BACKEND - TO'LIQ (Like/Dislike YO'Q)
 // =========================================================
 require('dotenv').config();
 const express = require('express');
@@ -74,11 +74,7 @@ const mongooseOptions = {
 // =========================================================
 const QismSchema = new mongoose.Schema({
   qismRaqami: { type: Number, required: true },
-  video: { type: String, required: true },
-  likes: { type: Number, default: 0 },
-  dislikes: { type: Number, default: 0 },
-  likedBy: [{ type: String }],
-  dislikedBy: [{ type: String }]
+  video: { type: String, required: true }
 });
 
 const MovieSchema = new mongoose.Schema({
@@ -93,11 +89,7 @@ const MovieSchema = new mongoose.Schema({
   rasm: { type: String, required: true },
   video: { type: String, default: '' },
   qismlar: [QismSchema],
-  views: { type: Number, default: 0 },
-  likes: { type: Number, default: 0 },
-  dislikes: { type: Number, default: 0 },
-  likedBy: [{ type: String }],
-  dislikedBy: [{ type: String }]
+  views: { type: Number, default: 0 }
 }, { timestamps: true });
 
 MovieSchema.index({ nomi: 'text' });
@@ -312,9 +304,31 @@ app.get('/api/movies/search', async (req, res) => {
     if (!q || q.trim() === '') {
       return res.json({ success: true, data: [] });
     }
+    
+    const query = q.trim();
     const movies = await Movie.find({
-      nomi: { $regex: q.trim(), $options: 'i' }
+      $or: [
+        { nomi: { $regex: query, $options: 'i' } },
+        { janr: { $regex: query, $options: 'i' } }
+      ]
     }).sort({ createdAt: -1 }).lean();
+    
+    // Agar natija bo'lmasa, fuzzy search
+    if (movies.length === 0 && query.length > 2) {
+      const allMovies = await Movie.find().lean();
+      const fuzzyResults = allMovies.filter(m => {
+        const name = m.nomi.toLowerCase();
+        const q = query.toLowerCase();
+        let nameIndex = 0, queryIndex = 0, matches = 0;
+        while (nameIndex < name.length && queryIndex < q.length) {
+          if (name[nameIndex] === q[queryIndex]) { matches++; queryIndex++; }
+          nameIndex++;
+        }
+        return matches / q.length >= 0.6;
+      });
+      return res.json({ success: true, count: fuzzyResults.length, data: fuzzyResults, fuzzy: true });
+    }
+    
     res.json({ success: true, count: movies.length, data: movies });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -333,245 +347,6 @@ app.get('/api/movies/:id', async (req, res) => {
   }
 });
 
-// =========================================================
-// LIKE / DISLIKE (TUZATILGAN)
-// =========================================================
-
-app.post('/api/movies/:id/like', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const userId = req.headers['x-forwarded-for'] || req.ip || 'anonymous';
-    const userKey = userId.toString();
-
-    const movie = await Movie.findById(id);
-    if (!movie) {
-      return res.status(404).json({ success: false, message: 'Film topilmadi' });
-    }
-
-    const alreadyLiked = movie.likedBy.includes(userKey);
-    const alreadyDisliked = movie.dislikedBy.includes(userKey);
-
-    if (alreadyLiked) {
-      movie.likes = Math.max(0, movie.likes - 1);
-      movie.likedBy = movie.likedBy.filter(id => id !== userKey);
-    } else {
-      movie.likes += 1;
-      movie.likedBy.push(userKey);
-      if (alreadyDisliked) {
-        movie.dislikes = Math.max(0, movie.dislikes - 1);
-        movie.dislikedBy = movie.dislikedBy.filter(id => id !== userKey);
-      }
-    }
-
-    await movie.save();
-
-    // Keshni tozalash
-    cache.clear();
-
-    res.json({
-      success: true,
-      data: {
-        likes: movie.likes,
-        dislikes: movie.dislikes,
-        userLiked: movie.likedBy.includes(userKey),
-        userDisliked: movie.dislikedBy.includes(userKey)
-      }
-    });
-  } catch (error) {
-    console.error('Like xatosi:', error);
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-app.post('/api/movies/:id/dislike', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const userId = req.headers['x-forwarded-for'] || req.ip || 'anonymous';
-    const userKey = userId.toString();
-
-    const movie = await Movie.findById(id);
-    if (!movie) {
-      return res.status(404).json({ success: false, message: 'Film topilmadi' });
-    }
-
-    const alreadyLiked = movie.likedBy.includes(userKey);
-    const alreadyDisliked = movie.dislikedBy.includes(userKey);
-
-    if (alreadyDisliked) {
-      movie.dislikes = Math.max(0, movie.dislikes - 1);
-      movie.dislikedBy = movie.dislikedBy.filter(id => id !== userKey);
-    } else {
-      movie.dislikes += 1;
-      movie.dislikedBy.push(userKey);
-      if (alreadyLiked) {
-        movie.likes = Math.max(0, movie.likes - 1);
-        movie.likedBy = movie.likedBy.filter(id => id !== userKey);
-      }
-    }
-
-    await movie.save();
-
-    // Keshni tozalash
-    cache.clear();
-
-    res.json({
-      success: true,
-      data: {
-        likes: movie.likes,
-        dislikes: movie.dislikes,
-        userLiked: movie.likedBy.includes(userKey),
-        userDisliked: movie.dislikedBy.includes(userKey)
-      }
-    });
-  } catch (error) {
-    console.error('Dislike xatosi:', error);
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-// =========================================================
-// LIKE / DISLIKE - QISM UCHUN
-// =========================================================
-
-app.post('/api/movies/:id/qism/:qismIndex/like', async (req, res) => {
-  try {
-    const { id, qismIndex } = req.params;
-    const userId = req.headers['x-forwarded-for'] || req.ip || 'anonymous';
-    const userKey = userId.toString();
-
-    const movie = await Movie.findById(id);
-    if (!movie) {
-      return res.status(404).json({ success: false, message: 'Film topilmadi' });
-    }
-
-    const index = parseInt(qismIndex);
-    if (index < 0 || index >= movie.qismlar.length) {
-      return res.status(400).json({ success: false, message: 'Qism topilmadi' });
-    }
-
-    const qism = movie.qismlar[index];
-    const alreadyLiked = qism.likedBy.includes(userKey);
-    const alreadyDisliked = qism.dislikedBy.includes(userKey);
-
-    if (alreadyLiked) {
-      qism.likes = Math.max(0, qism.likes - 1);
-      qism.likedBy = qism.likedBy.filter(id => id !== userKey);
-    } else {
-      qism.likes += 1;
-      qism.likedBy.push(userKey);
-      if (alreadyDisliked) {
-        qism.dislikes = Math.max(0, qism.dislikes - 1);
-        qism.dislikedBy = qism.dislikedBy.filter(id => id !== userKey);
-      }
-    }
-
-    await movie.save();
-    cache.clear();
-
-    res.json({
-      success: true,
-      data: {
-        likes: qism.likes,
-        dislikes: qism.dislikes,
-        userLiked: qism.likedBy.includes(userKey),
-        userDisliked: qism.dislikedBy.includes(userKey),
-        qismIndex: index
-      }
-    });
-  } catch (error) {
-    console.error('Qism like xatosi:', error);
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-app.post('/api/movies/:id/qism/:qismIndex/dislike', async (req, res) => {
-  try {
-    const { id, qismIndex } = req.params;
-    const userId = req.headers['x-forwarded-for'] || req.ip || 'anonymous';
-    const userKey = userId.toString();
-
-    const movie = await Movie.findById(id);
-    if (!movie) {
-      return res.status(404).json({ success: false, message: 'Film topilmadi' });
-    }
-
-    const index = parseInt(qismIndex);
-    if (index < 0 || index >= movie.qismlar.length) {
-      return res.status(400).json({ success: false, message: 'Qism topilmadi' });
-    }
-
-    const qism = movie.qismlar[index];
-    const alreadyLiked = qism.likedBy.includes(userKey);
-    const alreadyDisliked = qism.dislikedBy.includes(userKey);
-
-    if (alreadyDisliked) {
-      qism.dislikes = Math.max(0, qism.dislikes - 1);
-      qism.dislikedBy = qism.dislikedBy.filter(id => id !== userKey);
-    } else {
-      qism.dislikes += 1;
-      qism.dislikedBy.push(userKey);
-      if (alreadyLiked) {
-        qism.likes = Math.max(0, qism.likes - 1);
-        qism.likedBy = qism.likedBy.filter(id => id !== userKey);
-      }
-    }
-
-    await movie.save();
-    cache.clear();
-
-    res.json({
-      success: true,
-      data: {
-        likes: qism.likes,
-        dislikes: qism.dislikes,
-        userLiked: qism.likedBy.includes(userKey),
-        userDisliked: qism.dislikedBy.includes(userKey),
-        qismIndex: index
-      }
-    });
-  } catch (error) {
-    console.error('Qism dislike xatosi:', error);
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-app.get('/api/movies/:id/rating', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const userId = req.headers['x-forwarded-for'] || req.ip || 'anonymous';
-    const userKey = userId.toString();
-
-    const movie = await Movie.findById(id).select('likes dislikes likedBy dislikedBy qismlar');
-    if (!movie) {
-      return res.status(404).json({ success: false, message: 'Film topilmadi' });
-    }
-
-    const qismRating = movie.qismlar.map((qism, index) => ({
-      index,
-      likes: qism.likes || 0,
-      dislikes: qism.dislikes || 0,
-      userLiked: qism.likedBy.includes(userKey),
-      userDisliked: qism.dislikedBy.includes(userKey)
-    }));
-
-    res.json({
-      success: true,
-      data: {
-        likes: movie.likes || 0,
-        dislikes: movie.dislikes || 0,
-        userLiked: movie.likedBy.includes(userKey),
-        userDisliked: movie.dislikedBy.includes(userKey),
-        qismlar: qismRating
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-// =========================================================
-// ADMIN CRUD
-// =========================================================
 app.post('/api/movies', auth, async (req, res) => {
   try {
     const movie = await Movie.create(req.body);
@@ -658,5 +433,10 @@ startServer();
 
 process.on('SIGINT', () => {
   console.log('👋 Server to\'xtatilmoqda...');
+  mongoose.connection.close().then(() => process.exit(0));
+});
+
+process.on('SIGTERM', () => {
+  console.log('👋 Server to\'xtatilmoqda (SIGTERM)...');
   mongoose.connection.close().then(() => process.exit(0));
 });
