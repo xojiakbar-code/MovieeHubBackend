@@ -435,8 +435,3 @@ process.on('SIGINT', () => {
   console.log('👋 Server to\'xtatilmoqda...');
   mongoose.connection.close().then(() => process.exit(0));
 });
-
-process.on('SIGTERM', () => {
-  console.log('👋 Server to\'xtatilmoqda (SIGTERM)...');
-  mongoose.connection.close().then(() => process.exit(0));
-});
