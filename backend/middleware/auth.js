@@ -1,6 +1,3 @@
-// =========================================================
-// AUTH MIDDLEWARE - YANGILANGAN (tokenVersion tekshiruvi)
-// =========================================================
 const jwt = require('jsonwebtoken');
 const Admin = require('../models/Admin');
 
@@ -15,10 +12,7 @@ const auth = async (req, res, next) => {
       });
     }
 
-    // Tokenni decode qilish
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'default_secret');
-    
-    // Adminni bazadan tekshirish
     const admin = await Admin.findById(decoded.id).select('username tokenVersion');
     
     if (!admin) {
@@ -28,7 +22,6 @@ const auth = async (req, res, next) => {
       });
     }
 
-    // Token versiyasini tekshirish (agar o'zgargan bo'lsa, token yaroqsiz)
     if (decoded.tokenVersion !== admin.tokenVersion) {
       return res.status(401).json({
         success: false,
