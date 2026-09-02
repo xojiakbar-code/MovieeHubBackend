@@ -1,5 +1,5 @@
 // =========================================================
-// MOVIEHUB BACKEND - OPTIMALLASHTIRILGAN & MUSTAHKAMLANGAN
+// MOVIEHUB BACKEND - TO'LIQ TUZATILGAN
 // =========================================================
 require('dotenv').config();
 const express = require('express');
@@ -9,37 +9,18 @@ const path = require('path');
 const fs = require('fs');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
-
-// Security
+const compression = require('compression');
 const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const mongoSanitize = require('express-mongo-sanitize');
 const xss = require('xss-clean');
 const hpp = require('hpp');
-
-// Performance
-const compression = require('compression');
-const cache = require('./middleware/cache');
-const {
-  compress,
-  responseTime,
-  cacheHeaders,
-  limiter,
-  requestId
-} = require('./middleware/performance');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
 // =========================================================
-// PERFORMANCE MIDDLEWARE (Eng muhim)
-// =========================================================
-app.use(compression); // Javoblarni siqish
-app.use(responseTime); // So'rov vaqtini o'lchash
-app.use(cacheHeaders); // Kesh headerlari
-app.use(requestId); // Har bir so'rovga ID
-
-// =========================================================
-// SECURITY MIDDLEWARE
+// XAVFSIZLIK MIDDLEWARE'LARI
 // =========================================================
 
 // 1. Helmet
@@ -51,7 +32,7 @@ app.use(helmet({
       styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       imgSrc: ["'self'", "data:", "https:", "http:"],
       fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
-      connectSrc: ["'self'", "https://movieehubbackend.onrender.com", "https://movihub.pages.dev"],
+      connectSrc: ["'self'"],
       frameSrc: ["'self'", "https://www.youtube.com"],
       mediaSrc: ["'self'", "https:", "http:"],
       objectSrc: ["'none'"],
@@ -61,10 +42,22 @@ app.use(helmet({
     }
   },
   crossOriginEmbedderPolicy: false,
-  crossOriginResourcePolicy: { policy: "cross-origin" }
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" }
 }));
 
 // 2. Rate Limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  message: { 
+    success: false, 
+    message: '⚠️ Juda ko\'p so\'rov. Iltimos, 15 daqiqa kutib keyin urinib ko\'ring.' 
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => req.ip === '127.0.0.1'
+});
 app.use('/api/', limiter);
 
 // 3. XSS va injeksiya himoyasi
@@ -94,15 +87,21 @@ app.use(cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With'],
   maxAge: 86400
 }));
 
-// 5. JSON parser
+// 5. Compression
+app.use(compression({
+  level: 6,
+  threshold: 1024
+}));
+
+// 6. JSON parser
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// 6. Static files
+// 7. Static files
 const uploadsPath = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsPath)) {
   fs.mkdirSync(uploadsPath, { recursive: true });
@@ -113,35 +112,50 @@ app.use('/uploads', express.static(uploadsPath, {
   lastModified: true,
   setHeaders: (res) => {
     res.set('Cache-Control', 'public, max-age=604800, immutable');
+    res.set('X-Content-Type-Options', 'nosniff');
   }
 }));
 
+// 8. Response time
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    res.set('X-Response-Time', `${duration}ms`);
+    if (duration > 3000) {
+      console.warn(`⚠️ Sekin so'rov: ${req.method} ${req.url} - ${duration}ms`);
+    }
+  });
+  next();
+});
+
 // =========================================================
-// MONGODB CONNECTION - OPTIMALLASHTIRILGAN
+// MONGODB CONNECTION
 // =========================================================
 const mongooseOptions = {
-  maxPoolSize: 25, // Maksimal ulanishlar
-  minPoolSize: 5,
-  socketTimeoutMS: 30000,
-  connectTimeoutMS: 5000,
-  serverSelectionTimeoutMS: 3000,
-  heartbeatFrequencyMS: 5000,
+  maxPoolSize: 10,
+  minPoolSize: 2,
+  socketTimeoutMS: 60000,
+  connectTimeoutMS: 10000,
+  serverSelectionTimeoutMS: 5000,
+  heartbeatFrequencyMS: 10000,
   retryWrites: true,
   retryReads: true,
   family: 4,
-  autoIndex: process.env.NODE_ENV !== 'production',
-  readPreference: 'secondaryPreferred'
+  autoIndex: process.env.NODE_ENV !== 'production'
 };
 
 // =========================================================
-// SCHEMALAR - INDEXLAR BILAN
+// SCHEMALAR
 // =========================================================
 
+// Qism Schema
 const QismSchema = new mongoose.Schema({
   qismRaqami: { type: Number, required: true },
   video: { type: String, required: true }
 });
 
+// Movie Schema
 const MovieSchema = new mongoose.Schema({
   nomi: { type: String, required: true, trim: true, index: true },
   turi: { type: String, enum: ['film', 'serial'], required: true, index: true },
@@ -157,14 +171,13 @@ const MovieSchema = new mongoose.Schema({
   views: { type: Number, default: 0 }
 }, { timestamps: true });
 
-// =========================================================
-// INDEXLAR - TEZLIK UCHUN (ENG MUHIM)
-// =========================================================
+// INDEXLAR - TEZLIK UCHUN
 MovieSchema.index({ turi: 1, yili: -1 });
 MovieSchema.index({ janr: 1, yili: -1 });
 MovieSchema.index({ nomi: 'text', janr: 'text' });
 MovieSchema.index({ createdAt: -1 });
 
+// Admin Schema
 const AdminSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true, trim: true },
   password: { type: String, required: true },
@@ -217,9 +230,47 @@ const auth = async (req, res, next) => {
     req.admin = { id: admin._id, username: admin.username, tokenVersion: admin.tokenVersion };
     next();
   } catch (error) {
-    res.status(401).json({ success: false, message: 'Noto\'g\'ri token' });
+    console.error('Auth xatosi:', error);
+    if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
+      return res.status(401).json({ success: false, message: 'Noto\'g\'ri token' });
+    }
+    res.status(500).json({ success: false, message: 'Server xatosi' });
   }
 };
+
+// =========================================================
+// CACHE
+// =========================================================
+class Cache {
+  constructor() {
+    this.store = new Map();
+    this.defaultTTL = 30000;
+  }
+  get(key) {
+    const item = this.store.get(key);
+    if (!item) return null;
+    if (Date.now() - item.timestamp > item.ttl) {
+      this.store.delete(key);
+      return null;
+    }
+    return item.data;
+  }
+  set(key, data, ttl = this.defaultTTL) {
+    this.store.set(key, { data, timestamp: Date.now(), ttl });
+  }
+  clear() { this.store.clear(); }
+  clean() {
+    const now = Date.now();
+    for (const [key, item] of this.store) {
+      if (now - item.timestamp > item.ttl) {
+        this.store.delete(key);
+      }
+    }
+  }
+}
+
+const cache = new Cache();
+setInterval(() => cache.clean(), 5 * 60 * 1000);
 
 // =========================================================
 // ROUTE'LAR
@@ -228,7 +279,7 @@ app.get('/health', (req, res) => {
   res.json({ 
     status: 'OK', 
     uptime: process.uptime(), 
-    cacheSize: cache.size(),
+    cacheSize: cache.store.size,
     memory: process.memoryUsage(),
     timestamp: new Date().toISOString()
   });
@@ -239,11 +290,7 @@ app.get('/', (req, res) => {
     success: true, 
     message: '🎬 MovieHub API', 
     version: '1.0.0',
-    performance: {
-      compression: true,
-      cache: true,
-      rateLimit: true
-    }
+    endpoints: ['/api/movies', '/api/admin/login']
   });
 });
 
@@ -276,6 +323,7 @@ app.post('/api/admin/login', async (req, res) => {
     
     res.json({ success: true, token, admin: { id: admin._id, username: admin.username } });
   } catch (error) {
+    console.error('Login xatosi:', error);
     res.status(500).json({ success: false, message: 'Server xatosi' });
   }
 });
@@ -338,11 +386,10 @@ app.put('/api/admin/update', auth, async (req, res) => {
 });
 
 // =========================================================
-// MOVIES ROUTE'LAR - KESH BILAN
+// MOVIES ROUTE'LAR (TEZKOR)
 // =========================================================
 app.get('/api/movies', async (req, res) => {
   try {
-    // Keshdan tekshirish
     const cached = cache.get('all_movies');
     if (cached) {
       return res.json({ 
@@ -359,11 +406,10 @@ app.get('/api/movies', async (req, res) => {
       .lean()
       .limit(50);
 
-    // Keshga saqlash
     cache.set('all_movies', movies);
-
     res.json({ success: true, count: movies.length, data: movies });
   } catch (error) {
+    console.error('Movies xatosi:', error);
     res.status(500).json({ success: false, message: 'Server xatosi' });
   }
 });
@@ -371,14 +417,12 @@ app.get('/api/movies', async (req, res) => {
 app.get('/api/movies/search', async (req, res) => {
   try {
     const { q } = req.query;
-    if (!q || q.trim() === '') {
+    if (!q || typeof q !== 'string' || q.trim() === '') {
       return res.json({ success: true, data: [] });
     }
 
     const query = q.trim();
     const cacheKey = `search_${query.toLowerCase()}`;
-    
-    // Keshdan tekshirish
     const cached = cache.get(cacheKey);
     if (cached) {
       return res.json({ 
@@ -399,11 +443,10 @@ app.get('/api/movies/search', async (req, res) => {
     .select('-__v')
     .lean();
 
-    // Keshga saqlash (15 soniya)
     cache.set(cacheKey, movies, 15000);
-
     res.json({ success: true, count: movies.length, data: movies });
   } catch (error) {
+    console.error('Search xatosi:', error);
     res.status(500).json({ success: false, message: 'Server xatosi' });
   }
 });
@@ -429,11 +472,10 @@ app.get('/api/movies/:id', async (req, res) => {
     // Ko'rishlar sonini oshirish (async)
     Movie.findByIdAndUpdate(id, { $inc: { views: 1 } }).catch(() => {});
 
-    // Keshga saqlash (60 soniya)
     cache.set(cacheKey, movie, 60000);
-
     res.json({ success: true, data: movie });
   } catch (error) {
+    console.error('Movie detail xatosi:', error);
     res.status(500).json({ success: false, message: 'Server xatosi' });
   }
 });
@@ -444,9 +486,10 @@ app.get('/api/movies/:id', async (req, res) => {
 app.post('/api/movies', auth, async (req, res) => {
   try {
     const movie = await Movie.create(req.body);
-    cache.clear(); // Keshni tozalash
+    cache.clear();
     res.status(201).json({ success: true, data: movie });
   } catch (error) {
+    console.error('Create xatosi:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -454,10 +497,13 @@ app.post('/api/movies', auth, async (req, res) => {
 app.put('/api/movies/:id', auth, async (req, res) => {
   try {
     const movie = await Movie.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    if (!movie) return res.status(404).json({ success: false, message: 'Film topilmadi' });
-    cache.clear(); // Keshni tozalash
+    if (!movie) {
+      return res.status(404).json({ success: false, message: 'Film topilmadi' });
+    }
+    cache.clear();
     res.json({ success: true, data: movie });
   } catch (error) {
+    console.error('Update xatosi:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -465,10 +511,13 @@ app.put('/api/movies/:id', auth, async (req, res) => {
 app.delete('/api/movies/:id', auth, async (req, res) => {
   try {
     const movie = await Movie.findByIdAndDelete(req.params.id);
-    if (!movie) return res.status(404).json({ success: false, message: 'Film topilmadi' });
-    cache.clear(); // Keshni tozalash
+    if (!movie) {
+      return res.status(404).json({ success: false, message: 'Film topilmadi' });
+    }
+    cache.clear();
     res.json({ success: true, message: 'Film o\'chirildi' });
   } catch (error) {
+    console.error('Delete xatosi:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -477,14 +526,27 @@ app.delete('/api/movies/:id', auth, async (req, res) => {
 // 404 & ERROR HANDLER
 // =========================================================
 app.use((req, res) => {
-  res.status(404).json({ success: false, message: 'Manzil topilmadi' });
+  res.status(404).json({ 
+    success: false, 
+    message: 'So\'ralgan manzil topilmadi' 
+  });
 });
 
 app.use((err, req, res, next) => {
   console.error('Server error:', err.message);
+  
+  if (err.message.includes('CORS')) {
+    return res.status(403).json({ 
+      success: false, 
+      message: 'Ruxsat etilmagan manba' 
+    });
+  }
+  
   res.status(500).json({ 
     success: false, 
-    message: process.env.NODE_ENV === 'production' ? 'Server xatosi' : err.message 
+    message: process.env.NODE_ENV === 'production' 
+      ? 'Serverda xatolik yuz berdi' 
+      : err.message 
   });
 });
 
@@ -521,6 +583,8 @@ async function initAdmin() {
         tokenVersion: 0 
       });
       console.log(`✅ Admin yaratildi: ${username} / ${password}`);
+    } else {
+      console.log(`✅ ${count} ta admin mavjud`);
     }
   } catch (error) {
     console.error('Admin init xatosi:', error);
@@ -531,15 +595,21 @@ async function initAdmin() {
 // SERVER START
 // =========================================================
 async function startServer() {
-  await connectDB();
-  await initAdmin();
-  app.listen(PORT, () => {
-    console.log(`🚀 Server ${PORT}-portda`);
-    console.log(`🔑 Login: admin / kuchli_parol123`);
-    console.log(`💾 Kesh hajmi: ${cache.size()}`);
-    console.log(`🛡️ Security: Faol`);
-    console.log(`⚡ Compression: Faol`);
-  });
+  try {
+    await connectDB();
+    await initAdmin();
+    
+    app.listen(PORT, () => {
+      console.log(`🚀 Server ${PORT}-portda ishlamoqda`);
+      console.log(`🔑 Login: admin / kuchli_parol123`);
+      console.log(`💾 Kesh hajmi: ${cache.store.size}`);
+      console.log(`🛡️ Xavfsizlik: Faol`);
+      console.log(`⚡ Compression: Faol`);
+    });
+  } catch (error) {
+    console.error('Server ishga tushmadi:', error);
+    process.exit(1);
+  }
 }
 
 startServer();
@@ -547,7 +617,25 @@ startServer();
 // =========================================================
 // GRACEFUL SHUTDOWN
 // =========================================================
-process.on('SIGINT', () => {
+const gracefulShutdown = () => {
   console.log('👋 Server to\'xtatilmoqda...');
-  mongoose.connection.close().then(() => process.exit(0));
+  mongoose.connection.close(() => {
+    console.log('✅ MongoDB ulanishi yopildi');
+    process.exit(0);
+  });
+};
+
+process.on('SIGINT', gracefulShutdown);
+process.on('SIGTERM', gracefulShutdown);
+
+// =========================================================
+// TUTILMAGAN XATOLIKLAR
+// =========================================================
+process.on('unhandledRejection', (error) => {
+  console.error('❌ Tutilmagan xato:', error);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('❌ Tutilmagan exception:', error);
+  process.exit(1);
 });
