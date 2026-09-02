@@ -1,3 +1,6 @@
+// =========================================================
+// MOVIES ROUTE'LAR - AQLLI QIDIRUV BILAN
+// =========================================================
 const express = require('express');
 const mongoose = require('mongoose');
 const Movie = require('../models/Movie');
@@ -17,56 +20,103 @@ router.get('/', async (req, res) => {
 });
 
 // =========================================================
-// GET - Qidiruv (Aqlli qidiruv)
+// GET - AQLLI QIDIRUV (Fuzzy Search)
 // =========================================================
 router.get('/search', async (req, res) => {
   try {
     const { q } = req.query;
-    if (!q || q.trim() === '') {
+    if (!q || typeof q !== 'string' || q.trim() === '') {
       return res.json({ success: true, data: [] });
     }
+
+    const query = q.trim().toLowerCase();
     
-    const query = q.trim();
-    
-    // 1. To'liq matn bo'yicha qidiruv
-    const movies = await Movie.find({
+    // 1. Avval aniq qidiruv
+    let movies = await Movie.find({
       $or: [
         { nomi: { $regex: query, $options: 'i' } },
         { janr: { $regex: query, $options: 'i' } }
       ]
     }).sort({ createdAt: -1 }).lean();
-    
-    // 2. Agar natija bo'lmasa, harflar bo'yicha moslik (fuzzy)
-    if (movies.length === 0 && query.length > 2) {
+
+    // 2. Agar natija bo'lmasa, fuzzy search (harflarni solishtirish)
+    if (movies.length === 0 && query.length > 1) {
       const allMovies = await Movie.find().lean();
+      
+      // O'xshash harflar
+      const similarChars = {
+        'c': ['k', 's'],
+        's': ['sh', 'z', 'c'],
+        'z': ['s'],
+        'k': ['c', 'q', 'g', 'x'],
+        'q': ['k'],
+        'g': ['k', 'j'],
+        'j': ['g', 'i'],
+        'o': ['a', 'u'],
+        'a': ['o', 'e'],
+        'e': ['i', 'a'],
+        'i': ['e', 'y'],
+        'y': ['i'],
+        'u': ['o'],
+        'h': ['x', 'g'],
+        'x': ['h', 'k'],
+        'b': ['p', 'v'],
+        'p': ['b'],
+        'v': ['b', 'w'],
+        'w': ['v'],
+        'd': ['t'],
+        't': ['d'],
+        'm': ['n'],
+        'n': ['m'],
+        'r': ['l'],
+        'l': ['r']
+      };
+      
       const fuzzyResults = allMovies.filter(m => {
         const name = m.nomi.toLowerCase();
-        const q = query.toLowerCase();
-        let nameIndex = 0;
-        let queryIndex = 0;
-        let matches = 0;
+        let nameIndex = 0, queryIndex = 0, matches = 0;
         
-        while (nameIndex < name.length && queryIndex < q.length) {
-          if (name[nameIndex] === q[queryIndex]) {
+        while (nameIndex < name.length && queryIndex < query.length) {
+          const nameChar = name[nameIndex];
+          const queryChar = query[queryIndex];
+          
+          if (nameChar === queryChar) {
             matches++;
             queryIndex++;
+          } else if (similarChars[nameChar] && similarChars[nameChar].includes(queryChar)) {
+            matches++;
+            queryIndex++;
+          } else if (similarChars[queryChar] && similarChars[queryChar].includes(nameChar)) {
+            matches++;
+            queryIndex++;
+          } else {
+            // 1 harf tashlab ketish
+            if (queryIndex < query.length - 1 && nameChar === query[queryIndex + 1]) {
+              matches++;
+              queryIndex += 2;
+            } else {
+              nameIndex++;
+              continue;
+            }
           }
           nameIndex++;
         }
         
-        return matches / q.length >= 0.6;
+        const matchPercent = matches / Math.max(query.length, name.length);
+        return matchPercent >= 0.5;
       });
       
       return res.json({ 
         success: true, 
         count: fuzzyResults.length, 
         data: fuzzyResults,
-        fuzzy: true
+        fuzzy: true 
       });
     }
     
     res.json({ success: true, count: movies.length, data: movies });
   } catch (error) {
+    console.error('Search xatosi:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
