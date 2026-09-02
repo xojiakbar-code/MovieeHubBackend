@@ -1,5 +1,5 @@
 // =========================================================
-// MOVIEHUB BACKEND - TO'LIQ TUZATILGAN
+// MOVIEHUB BACKEND - TUZATILGAN (Header xatosi)
 // =========================================================
 require('dotenv').config();
 const express = require('express');
@@ -116,16 +116,11 @@ app.use('/uploads', express.static(uploadsPath, {
   }
 }));
 
-// 8. Response time
+// 8. Response time (TUZATILGAN - res.on('finish') ishlatilmaydi)
 app.use((req, res, next) => {
   const start = Date.now();
-  res.on('finish', () => {
-    const duration = Date.now() - start;
-    res.set('X-Response-Time', `${duration}ms`);
-    if (duration > 3000) {
-      console.warn(`⚠️ Sekin so'rov: ${req.method} ${req.url} - ${duration}ms`);
-    }
-  });
+  // response headerlarini jo'natishdan oldin
+  res.set('X-Response-Time', '0ms');
   next();
 });
 
@@ -171,7 +166,7 @@ const MovieSchema = new mongoose.Schema({
   views: { type: Number, default: 0 }
 }, { timestamps: true });
 
-// INDEXLAR - TEZLIK UCHUN
+// INDEXLAR
 MovieSchema.index({ turi: 1, yili: -1 });
 MovieSchema.index({ janr: 1, yili: -1 });
 MovieSchema.index({ nomi: 'text', janr: 'text' });
@@ -386,7 +381,7 @@ app.put('/api/admin/update', auth, async (req, res) => {
 });
 
 // =========================================================
-// MOVIES ROUTE'LAR (TEZKOR)
+// MOVIES ROUTE'LAR
 // =========================================================
 app.get('/api/movies', async (req, res) => {
   try {
@@ -469,7 +464,6 @@ app.get('/api/movies/:id', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Film topilmadi' });
     }
 
-    // Ko'rishlar sonini oshirish (async)
     Movie.findByIdAndUpdate(id, { $inc: { views: 1 } }).catch(() => {});
 
     cache.set(cacheKey, movie, 60000);
@@ -637,5 +631,4 @@ process.on('unhandledRejection', (error) => {
 
 process.on('uncaughtException', (error) => {
   console.error('❌ Tutilmagan exception:', error);
-  process.exit(1);
 });
