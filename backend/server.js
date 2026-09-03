@@ -1,5 +1,5 @@
 // =========================================================
-// MOVIEHUB BACKEND - TUZATILGAN (Header xatosi)
+// MOVIEHUB BACKEND - TO'LIQ (MOLSAB)
 // =========================================================
 require('dotenv').config();
 const express = require('express');
@@ -23,17 +23,16 @@ const PORT = process.env.PORT || 5000;
 // XAVFSIZLIK MIDDLEWARE'LARI
 // =========================================================
 
-// 1. Helmet
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://www.youtube.com"],
       styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-      imgSrc: ["'self'", "data:", "https:", "http:"],
+      imgSrc: ["'self'", "data:", "https:", "http:", "https://img.youtube.com"],
       fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
       connectSrc: ["'self'"],
-      frameSrc: ["'self'", "https://www.youtube.com"],
+      frameSrc: ["'self'", "https://www.youtube.com", "https://www.youtube-nocookie.com"],
       mediaSrc: ["'self'", "https:", "http:"],
       objectSrc: ["'none'"],
       baseUri: ["'self'"],
@@ -46,28 +45,20 @@ app.use(helmet({
   crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" }
 }));
 
-// 2. Rate Limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
-  message: { 
-    success: false, 
-    message: '⚠️ Juda ko\'p so\'rov. Iltimos, 15 daqiqa kutib keyin urinib ko\'ring.' 
-  },
+  message: { success: false, message: '⚠️ Juda ko\'p so\'rov. 15 daqiqa kutib keyin urinib ko\'ring.' },
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) => req.ip === '127.0.0.1'
 });
 app.use('/api/', limiter);
 
-// 3. XSS va injeksiya himoyasi
 app.use(mongoSanitize());
 app.use(xss());
-app.use(hpp({
-  whitelist: ['nomi', 'janr', 'yili', 'turi']
-}));
+app.use(hpp({ whitelist: ['nomi', 'janr', 'yili', 'turi'] }));
 
-// 4. CORS
 const allowedOrigins = [
   'https://movihub.pages.dev',
   'https://moviehub.pages.dev',
@@ -91,17 +82,10 @@ app.use(cors({
   maxAge: 86400
 }));
 
-// 5. Compression
-app.use(compression({
-  level: 6,
-  threshold: 1024
-}));
-
-// 6. JSON parser
+app.use(compression({ level: 6, threshold: 1024 }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// 7. Static files
 const uploadsPath = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsPath)) {
   fs.mkdirSync(uploadsPath, { recursive: true });
@@ -116,11 +100,8 @@ app.use('/uploads', express.static(uploadsPath, {
   }
 }));
 
-// 8. Response time (TUZATILGAN - res.on('finish') ishlatilmaydi)
 app.use((req, res, next) => {
   const start = Date.now();
-  // response headerlarini jo'natishdan oldin
-  res.set('X-Response-Time', '0ms');
   next();
 });
 
@@ -144,13 +125,11 @@ const mongooseOptions = {
 // SCHEMALAR
 // =========================================================
 
-// Qism Schema
 const QismSchema = new mongoose.Schema({
   qismRaqami: { type: Number, required: true },
   video: { type: String, required: true }
 });
 
-// Movie Schema
 const MovieSchema = new mongoose.Schema({
   nomi: { type: String, required: true, trim: true, index: true },
   turi: { type: String, enum: ['film', 'serial'], required: true, index: true },
@@ -160,19 +139,17 @@ const MovieSchema = new mongoose.Schema({
   tili: { type: String, required: true, trim: true },
   yoshChegarasi: { type: String, default: '0+', index: true },
   davomiyligi: { type: String, required: true, trim: true },
-  rasm: { type: String, required: true },
+  rasm: { type: String, default: '' },
   video: { type: String, default: '' },
   qismlar: [QismSchema],
   views: { type: Number, default: 0 }
 }, { timestamps: true });
 
-// INDEXLAR
 MovieSchema.index({ turi: 1, yili: -1 });
 MovieSchema.index({ janr: 1, yili: -1 });
 MovieSchema.index({ nomi: 'text', janr: 'text' });
 MovieSchema.index({ createdAt: -1 });
 
-// Admin Schema
 const AdminSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true, trim: true },
   password: { type: String, required: true },
@@ -387,12 +364,7 @@ app.get('/api/movies', async (req, res) => {
   try {
     const cached = cache.get('all_movies');
     if (cached) {
-      return res.json({ 
-        success: true, 
-        count: cached.length, 
-        data: cached, 
-        cached: true 
-      });
+      return res.json({ success: true, count: cached.length, data: cached, cached: true });
     }
 
     const movies = await Movie.find()
@@ -416,16 +388,11 @@ app.get('/api/movies/search', async (req, res) => {
       return res.json({ success: true, data: [] });
     }
 
-    const query = q.trim();
-    const cacheKey = `search_${query.toLowerCase()}`;
+    const query = q.trim().toLowerCase();
+    const cacheKey = `search_${query}`;
     const cached = cache.get(cacheKey);
     if (cached) {
-      return res.json({ 
-        success: true, 
-        count: cached.length, 
-        data: cached, 
-        cached: true 
-      });
+      return res.json({ success: true, count: cached.length, data: cached, cached: true });
     }
 
     const movies = await Movie.find({
@@ -520,20 +487,14 @@ app.delete('/api/movies/:id', auth, async (req, res) => {
 // 404 & ERROR HANDLER
 // =========================================================
 app.use((req, res) => {
-  res.status(404).json({ 
-    success: false, 
-    message: 'So\'ralgan manzil topilmadi' 
-  });
+  res.status(404).json({ success: false, message: 'So\'ralgan manzil topilmadi' });
 });
 
 app.use((err, req, res, next) => {
   console.error('Server error:', err.message);
   
   if (err.message.includes('CORS')) {
-    return res.status(403).json({ 
-      success: false, 
-      message: 'Ruxsat etilmagan manba' 
-    });
+    return res.status(403).json({ success: false, message: 'Ruxsat etilmagan manba' });
   }
   
   res.status(500).json({ 
